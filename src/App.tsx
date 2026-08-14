@@ -161,6 +161,20 @@ export default function App() {
             setAuthChecking(false);
           }
         } else if (session?.user) {
+          const isConfirmed = Boolean(
+            session.user.email_confirmed_at || (session.user as unknown as { confirmed_at?: string }).confirmed_at
+          );
+
+          if (!isConfirmed) {
+            // Unverified email: sign out and do not grant access
+            await client.auth.signOut();
+            if (isMounted) {
+              setCurrentUser(null);
+              setAuthChecking(false);
+            }
+            return;
+          }
+
           const userEmail = session.user.email || '';
           const fullName = session.user.user_metadata?.full_name || userEmail.split('@')[0];
           // Fetch role dynamically from profiles table

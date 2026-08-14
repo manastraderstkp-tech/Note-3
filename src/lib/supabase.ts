@@ -6,9 +6,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Note, TodoTask, WorkLog, UserSession, UserRole, UserProfile } from '../types';
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from '../data/initialData';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL } from './config';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL, EMAIL_REDIRECT_URL } from './config';
 
-export { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL };
+export { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL, EMAIL_REDIRECT_URL };
 
 // Storage keys for user session cache and profiles
 const STORAGE_KEY_USER = 'workspace_current_user';
@@ -248,14 +248,14 @@ export async function signUpUser(
   email: string,
   password: string,
   fullName?: string
-): Promise<{ user: UserSession | null; error: string | null }> {
+): Promise<{ user: UserSession | null; error: string | null; needsVerification?: boolean }> {
   const supabase = getSupabase();
   const trimmedEmail = email.trim().toLowerCase();
 
   if (!supabase) {
     return {
       user: null,
-      error: 'Supabase is not configured. Please click "Backend API" to enter your Supabase Project URL and Anon Key.',
+      error: 'Supabase client is not available.',
     };
   }
 
@@ -264,6 +264,7 @@ export async function signUpUser(
       email: trimmedEmail,
       password,
       options: {
+        emailRedirectTo: EMAIL_REDIRECT_URL,
         data: {
           full_name: fullName || trimmedEmail.split('@')[0],
         },
@@ -292,31 +293,16 @@ export async function signUpUser(
       };
     }
 
-    // If project requires email verification and session is null
-    if (!data.session) {
-      return {
-        user: null,
-        error: 'Account created! Please check your email inbox to confirm your address before signing in, or disable email confirmations in your Supabase Auth settings.',
-      };
-    }
+    // Ensure user is signed out immediately so they cannot enter workspace until verified
+    await supabase.auth.signOut();
+    localStorage.removeItem(STORAGE_KEY_USER);
 
-    // Fetch role from profiles table (trigger automatically assigns role in database)
-    const { role } = await fetchUserProfile(
-      data.user.id,
-      trimmedEmail,
-      data.user.user_metadata?.full_name || fullName
-    );
-
-    const sessionUser: UserSession = {
-      id: data.user.id,
-      email: data.user.email || trimmedEmail,
-      fullName: data.user.user_metadata?.full_name || fullName || trimmedEmail.split('@')[0],
-      role,
-      isDemo: false,
-      createdAt: data.user.created_at,
+    // Return success indicating verification link has been sent
+    return {
+      user: null,
+      error: null,
+      needsVerification: true,
     };
-    storeLocalUser(sessionUser);
-    return { user: sessionUser, error: null };
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : 'Error communicating with Supabase auth';
     return { user: null, error: errorMessage };
@@ -326,14 +312,14 @@ export async function signUpUser(
 export async function signInUser(
   email: string,
   password: string
-): Promise<{ user: UserSession | null; error: string | null }> {
+): Promise<{ user: UserSession | null; error: string | null; unverified?: boolean }> {
   const supabase = getSupabase();
   const trimmedEmail = email.trim().toLowerCase();
 
   if (!supabase) {
     return {
       user: null,
-      error: 'Supabase is not configured. Please click "Backend API" to enter your Supabase Project URL and Anon Key.',
+      error: 'Supabase client is not available.',
     };
   }
 
@@ -353,19 +339,42 @@ export async function signInUser(
           error: 'Invalid email or password. Please verify your credentials or sign up first.',
         };
       }
-      if (error.message.toLowerCase().includes('email not confirmed')) {
+      if (error.message.toLowerCase().includes('email not confirmed') || error.message.toLowerCase().includes('not verified')) {
+        await supabase.auth.signOut();
+        localStorage.removeItem(STORAGE_KEY_USER);
         return {
           user: null,
-          error: 'Email is not confirmed yet. Please verify your email or disable confirmation in Supabase Auth settings.',
+          error: 'Your email is not verified yet. Please check your inbox and confirm your email first.',
+          unverified: true,
         };
       }
       return { user: null, error: error.message };
     }
 
-    if (!data.session || !data.user) {
+    if (!data.user) {
       return {
         user: null,
-        error: 'Authentication failed: No active session returned from Supabase. Please sign up first.',
+        error: 'Authentication failed: No user account found.',
+      };
+    }
+
+    // Strict Email Verification check
+    const isEmailConfirmed = Boolean(data.user.email_confirmed_at || (data.user as unknown as { confirmed_at?: string }).confirmed_at);
+    if (!isEmailConfirmed) {
+      // Immediately log out unverified user to prevent session hijacking
+      await supabase.auth.signOut();
+      localStorage.removeItem(STORAGE_KEY_USER);
+      return {
+        user: null,
+        error: 'Your email is not verified yet. Please check your inbox and confirm your email first.',
+        unverified: true,
+      };
+    }
+
+    if (!data.session) {
+      return {
+        user: null,
+        error: 'Authentication failed: No active session returned from Supabase. Please try again.',
       };
     }
 
@@ -392,6 +401,33 @@ export async function signInUser(
   }
 }
 
+export async function resendVerificationEmail(email: string): Promise<{ success: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  const trimmedEmail = email.trim().toLowerCase();
+
+  if (!supabase) {
+    return { success: false, error: 'Supabase client is not available.' };
+  }
+
+  try {
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: trimmedEmail,
+      options: {
+        emailRedirectTo: EMAIL_REDIRECT_URL,
+      },
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true, error: null };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to resend confirmation email.';
+    return { success: false, error: msg };
+  }
+}
+
 export async function signOutUser(): Promise<void> {
   const supabase = getSupabase();
   if (supabase) {
@@ -412,9 +448,22 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
   const supabase = getSupabase();
   if (supabase) {
     try {
+      // Check for URL hash token or params from verification link click
+      const hash = typeof window !== 'undefined' ? window.location.hash : '';
+      const search = typeof window !== 'undefined' ? window.location.search : '';
+
       // Strictly verify session against Supabase server via getUser()
       const { data: { user }, error } = await supabase.auth.getUser();
       if (!error && user) {
+        // Enforce verified status
+        const isEmailConfirmed = Boolean(user.email_confirmed_at || (user as unknown as { confirmed_at?: string }).confirmed_at);
+        if (!isEmailConfirmed) {
+          console.warn('User email is not confirmed yet. Signing out...');
+          await supabase.auth.signOut();
+          localStorage.removeItem(STORAGE_KEY_USER);
+          return null;
+        }
+
         const userEmail = user.email || '';
         const fullName = user.user_metadata?.full_name || userEmail.split('@')[0];
         const { role } = await fetchUserProfile(user.id, userEmail, fullName);
@@ -427,6 +476,12 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
           createdAt: user.created_at,
         };
         storeLocalUser(sessionUser);
+
+        // Clean up hash fragment from url after successful login
+        if (typeof window !== 'undefined' && (hash.includes('access_token=') || search.includes('code='))) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
         return sessionUser;
       } else {
         // No valid user session in Supabase - purge local cache

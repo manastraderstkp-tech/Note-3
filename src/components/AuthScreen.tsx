@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Mail,
   Lock,
@@ -17,9 +17,12 @@ import {
   FileText,
   Clock,
   Database,
-  Layers
+  Layers,
+  Send,
+  RefreshCw,
+  Inbox
 } from 'lucide-react';
-import { signInUser, signUpUser, getStoredSupabaseConfig } from '../lib/supabase';
+import { signInUser, signUpUser, resendVerificationEmail, getStoredSupabaseConfig } from '../lib/supabase';
 import { UserSession } from '../types';
 
 interface AuthScreenProps {
@@ -41,15 +44,60 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isUnverified, setIsUnverified] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [verificationModalOpen, setVerificationModalOpen] = useState(false);
 
   const { isConfigured } = getStoredSupabaseConfig();
+
+  // Detect email verification confirmation tokens from URL hash or query params
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash;
+      const search = window.location.search;
+      if (
+        hash.includes('type=signup') ||
+        hash.includes('type=email_change') ||
+        hash.includes('type=recovery') ||
+        search.includes('type=signup')
+      ) {
+        setSuccessMessage('Email verified successfully! You can now sign in with your credentials.');
+        setMode('signin');
+      }
+    }
+  }, []);
+
+  const handleResendVerification = async () => {
+    const targetEmail = (unverifiedEmail || email).trim().toLowerCase();
+    if (!targetEmail) {
+      setError('Please enter your email address to resend verification.');
+      return;
+    }
+
+    setResending(true);
+    setError(null);
+    try {
+      const { success, error: resendErr } = await resendVerificationEmail(targetEmail);
+      if (success) {
+        setSuccessMessage(`Verification email resent to ${targetEmail}. Please check your inbox and spam folder.`);
+      } else {
+        setError(resendErr || 'Failed to resend verification email.');
+      }
+    } catch {
+      setError('An error occurred while resending verification email.');
+    } finally {
+      setResending(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccessMessage(null);
+    setIsUnverified(false);
 
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail || !password.trim()) {
@@ -76,18 +124,32 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setLoading(true);
     try {
       if (mode === 'signup') {
-        const { user, error: signUpErr } = await signUpUser(trimmedEmail, password, fullName.trim());
+        const { user, error: signUpErr, needsVerification } = await signUpUser(trimmedEmail, password, fullName.trim());
         if (signUpErr) {
           setError(signUpErr);
+        } else if (needsVerification) {
+          // Do NOT log user in immediately
+          setUnverifiedEmail(trimmedEmail);
+          setVerificationModalOpen(true);
+          setSuccessMessage(
+            'Account created successfully! A verification link has been sent to your email. Please verify your email before signing in.'
+          );
+          setMode('signin');
+          setPassword('');
+          setConfirmPassword('');
         } else if (user) {
-          setSuccessMessage('Account created successfully! Preparing your workspace...');
+          setSuccessMessage('Account created! Loading your workspace...');
           setTimeout(() => {
             onSuccess(user);
-          }, 500);
+          }, 400);
         }
       } else {
-        const { user, error: signInErr } = await signInUser(trimmedEmail, password);
-        if (signInErr) {
+        const { user, error: signInErr, unverified } = await signInUser(trimmedEmail, password);
+        if (unverified) {
+          setIsUnverified(true);
+          setUnverifiedEmail(trimmedEmail);
+          setError('Your email is not verified yet. Please check your inbox and confirm your email first.');
+        } else if (signInErr) {
           setError(signInErr);
         } else if (user) {
           setSuccessMessage('Signed in successfully! Loading workspace...');
@@ -214,9 +276,34 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             {/* Form Body */}
             <div className="p-6 sm:p-7">
               {error && (
-                <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300 animate-fadeIn">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
-                  <span className="font-medium">{error}</span>
+                <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300 animate-fadeIn">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-rose-500 mt-0.5" />
+                    <div className="flex-1">
+                      <span className="font-medium">{error}</span>
+                      {isUnverified && (
+                        <div className="mt-2.5 flex flex-wrap items-center gap-2 pt-2 border-t border-rose-200/60 dark:border-rose-900/40">
+                          <button
+                            id="btn-auth-resend-verification"
+                            type="button"
+                            onClick={handleResendVerification}
+                            disabled={resending}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-95 disabled:opacity-50"
+                          >
+                            {resending ? (
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Send className="h-3 w-3" />
+                            )}
+                            <span>{resending ? 'Sending...' : 'Resend Verification Email'}</span>
+                          </button>
+                          <span className="text-[11px] text-rose-600/80 dark:text-rose-400">
+                            Sent to {unverifiedEmail || email}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -387,6 +474,84 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           </div>
         </div>
       </main>
+
+      {/* Verification Sent Success Modal / Dialog */}
+      {verificationModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md overflow-hidden rounded-3xl border border-slate-200/90 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-800 px-6 py-6 text-white text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-md shadow-inner mb-3">
+                <Inbox className="h-7 w-7 text-white" />
+              </div>
+              <h2 className="text-xl font-bold tracking-tight text-white">Verify Your Email</h2>
+              <p className="text-xs text-indigo-100/90 mt-1">
+                A confirmation link has been dispatched to your inbox
+              </p>
+            </div>
+
+            <div className="p-6">
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 dark:border-indigo-950 dark:bg-indigo-950/40 text-center">
+                <p className="text-xs text-slate-600 dark:text-slate-300">
+                  We've sent an activation link to:
+                </p>
+                <p className="mt-1 font-semibold text-sm text-indigo-700 dark:text-indigo-400 break-all">
+                  {unverifiedEmail || email}
+                </p>
+              </div>
+
+              <div className="mt-4 space-y-2.5 text-xs text-slate-600 dark:text-slate-300">
+                <div className="flex items-start gap-2">
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                    1
+                  </div>
+                  <p>Open your email client and look for the verification email from Supabase.</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                    2
+                  </div>
+                  <p>Click the <strong>"Confirm your mail"</strong> link to verify your account.</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                    3
+                  </div>
+                  <p>Return here to sign in with your email and password.</p>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-2">
+                <button
+                  id="btn-close-verification-modal"
+                  type="button"
+                  onClick={() => {
+                    setVerificationModalOpen(false);
+                    setMode('signin');
+                  }}
+                  className="w-full rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/30 hover:bg-indigo-700 transition active:scale-[0.99]"
+                >
+                  Understood, Proceed to Sign In
+                </button>
+
+                <button
+                  id="btn-modal-resend-verification"
+                  type="button"
+                  onClick={handleResendVerification}
+                  disabled={resending}
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-800 transition disabled:opacity-50"
+                >
+                  {resending ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                  <span>{resending ? 'Sending Email...' : 'Resend Verification Email'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="relative z-10 mx-auto w-full max-w-6xl px-4 py-4 text-center text-xs text-slate-400 dark:text-slate-500">

@@ -17,3 +17,6 @@ export const SUPABASE_ANON_KEY: string =
 
 // Designated default admin email for automatic RBAC bootstrap
 export const DEFAULT_ADMIN_EMAIL: string = 'manastraderstkp@gmail.com';
+
+// Standard Email Redirect URL for Supabase Auth verification
+export const EMAIL_REDIRECT_URL: string = 'https://pdcc.com.np';

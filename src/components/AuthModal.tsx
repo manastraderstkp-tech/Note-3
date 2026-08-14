@@ -12,9 +12,12 @@ import {
   EyeOff,
   CheckCircle2,
   AlertCircle,
-  KeyRound
+  KeyRound,
+  Send,
+  RefreshCw,
+  Inbox
 } from 'lucide-react';
-import { signInUser, signUpUser, getStoredSupabaseConfig } from '../lib/supabase';
+import { signInUser, signUpUser, resendVerificationEmail, getStoredSupabaseConfig } from '../lib/supabase';
 import { UserSession } from '../types';
 
 interface AuthModalProps {
@@ -38,19 +41,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isUnverified, setIsUnverified] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
 
   if (!isOpen) return null;
 
   const { isConfigured } = getStoredSupabaseConfig();
 
+  const handleResendVerification = async () => {
+    const targetEmail = (unverifiedEmail || email).trim().toLowerCase();
+    if (!targetEmail) {
+      setError('Please enter your email address to resend verification.');
+      return;
+    }
+
+    setResending(true);
+    setError(null);
+    try {
+      const { success, error: resendErr } = await resendVerificationEmail(targetEmail);
+      if (success) {
+        setSuccessMessage(`Verification email resent to ${targetEmail}. Please check your inbox.`);
+      } else {
+        setError(resendErr || 'Failed to resend verification email.');
+      }
+    } catch {
+      setError('An error occurred while resending verification email.');
+    } finally {
+      setResending(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccessMessage(null);
+    setIsUnverified(false);
 
-    if (!email.trim() || !password.trim()) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || !password.trim()) {
       setError('Please provide both email and password.');
       return;
     }
@@ -74,19 +105,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     try {
       if (mode === 'signup') {
-        const { user, error: signUpErr } = await signUpUser(email, password, fullName);
+        const { user, error: signUpErr, needsVerification } = await signUpUser(trimmedEmail, password, fullName);
         if (signUpErr) {
           setError(signUpErr);
+        } else if (needsVerification) {
+          // Do not log user in immediately
+          setUnverifiedEmail(trimmedEmail);
+          setSuccessMessage(
+            'Account created successfully! A verification link has been sent to your email. Please verify your email before signing in.'
+          );
+          setMode('signin');
+          setPassword('');
+          setConfirmPassword('');
         } else if (user) {
-          setSuccessMessage('Account created successfully! Logging you in...');
+          setSuccessMessage('Account created! Logging you in...');
           setTimeout(() => {
             onSuccess(user);
             onClose();
-          }, 600);
+          }, 500);
         }
       } else {
-        const { user, error: signInErr } = await signInUser(email, password);
-        if (signInErr) {
+        const { user, error: signInErr, unverified } = await signInUser(trimmedEmail, password);
+        if (unverified) {
+          setIsUnverified(true);
+          setUnverifiedEmail(trimmedEmail);
+          setError('Your email is not verified yet. Please check your inbox and confirm your email first.');
+        } else if (signInErr) {
           setError(signInErr);
         } else if (user) {
           setSuccessMessage('Signed in successfully!');
@@ -96,8 +140,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           }, 400);
         }
       }
-    } catch (err: any) {
-      setError(err?.message || 'Authentication failed. Please check your credentials.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Authentication failed. Please check your credentials.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -175,9 +220,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Form Body */}
         <div className="p-6">
           {error && (
-            <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
-              <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
-              <span>{error}</span>
+            <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-500 mt-0.5" />
+                <div className="flex-1">
+                  <span className="font-medium">{error}</span>
+                  {isUnverified && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 pt-2 border-t border-rose-200/60 dark:border-rose-900/40">
+                      <button
+                        id="btn-modal-auth-resend"
+                        type="button"
+                        onClick={handleResendVerification}
+                        disabled={resending}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-95 disabled:opacity-50"
+                      >
+                        {resending ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Send className="h-3 w-3" />
+                        )}
+                        <span>{resending ? 'Sending...' : 'Resend Verification Link'}</span>
+                      </button>
+                      <span className="text-[11px] text-rose-600/80 dark:text-rose-400">
+                        {unverifiedEmail || email}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 

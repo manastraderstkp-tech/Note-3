@@ -42,6 +42,7 @@ interface HeaderProps {
   onOpenAuth: (mode?: 'signin' | 'signup') => void;
   onSignOut: () => void;
   onOpenSqlModal: () => void;
+  onOpenConfigModal?: () => void;
   onOpenSoundSettingsModal: () => void;
   onOpenDeployGuideModal: () => void;
   onOpenExportModal: (initialType?: 'all' | 'tasks' | 'worklogs' | 'notes') => void;
@@ -67,6 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAuth,
   onSignOut,
   onOpenSqlModal,
+  onOpenConfigModal,
   onOpenSoundSettingsModal,
   onOpenDeployGuideModal,
   onOpenExportModal,
@@ -630,6 +632,20 @@ export const Header: React.FC<HeaderProps> = ({
                     <Database className="h-3.5 w-3.5 text-emerald-500" />
                     <span>Supabase SQL & RBAC Schema</span>
                   </button>
+
+                  {onOpenConfigModal && (
+                    <button
+                      id="btn-menu-supabase-keys"
+                      onClick={() => {
+                        onOpenConfigModal();
+                        setShowProfileMenu(false);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+                    >
+                      <KeyRound className="h-3.5 w-3.5 text-emerald-500" />
+                      <span>Supabase Project Settings</span>
+                    </button>
+                  )}
 
                   <button
                     id="btn-menu-switch-account"

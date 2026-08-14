@@ -604,16 +604,19 @@ export async function syncFetchNotes(userId: string): Promise<{ notes: Note[]; i
   try {
     const raw = localStorage.getItem(localKey);
     if (raw) {
-      return { notes: JSON.parse(raw), isCloud: false };
+      const parsed: Note[] = JSON.parse(raw);
+      // Filter out legacy demo entries
+      const cleaned = parsed.filter((n) => !n.id.startsWith('note-1') && !n.id.startsWith('note-2') && !n.id.startsWith('note-3') && !n.id.startsWith('note-4') && !n.id.startsWith('note-5'));
+      if (cleaned.length !== parsed.length) {
+        localStorage.setItem(localKey, JSON.stringify(cleaned));
+      }
+      return { notes: cleaned, isCloud: false };
     }
   } catch (e) {
     console.error('Error parsing local notes', e);
   }
 
-  // If first time for this user, populate sample initial data
-  const initial = INITIAL_NOTES;
-  localStorage.setItem(localKey, JSON.stringify(initial));
-  return { notes: initial, isCloud: false };
+  return { notes: [], isCloud: false };
 }
 
 export async function syncSaveNote(userId: string, note: Note): Promise<boolean> {
@@ -703,15 +706,18 @@ export async function syncFetchTodos(userId: string): Promise<{ todos: TodoTask[
   try {
     const raw = localStorage.getItem(localKey);
     if (raw) {
-      return { todos: JSON.parse(raw), isCloud: false };
+      const parsed: TodoTask[] = JSON.parse(raw);
+      const cleaned = parsed.filter((t) => !t.id.startsWith('todo-1') && !t.id.startsWith('todo-2') && !t.id.startsWith('todo-3') && !t.id.startsWith('todo-4') && !t.id.startsWith('todo-5') && !t.id.startsWith('todo-6'));
+      if (cleaned.length !== parsed.length) {
+        localStorage.setItem(localKey, JSON.stringify(cleaned));
+      }
+      return { todos: cleaned, isCloud: false };
     }
   } catch (e) {
     console.error('Error reading local todos', e);
   }
 
-  const initial = INITIAL_TODOS;
-  localStorage.setItem(localKey, JSON.stringify(initial));
-  return { todos: initial, isCloud: false };
+  return { todos: [], isCloud: false };
 }
 
 export async function syncSaveTodo(userId: string, todo: TodoTask): Promise<boolean> {
@@ -798,15 +804,18 @@ export async function syncFetchWorkLogs(userId: string): Promise<{ worklogs: Wor
   try {
     const raw = localStorage.getItem(localKey);
     if (raw) {
-      return { worklogs: JSON.parse(raw), isCloud: false };
+      const parsed: WorkLog[] = JSON.parse(raw);
+      const cleaned = parsed.filter((w) => !w.id.startsWith('worklog-1') && !w.id.startsWith('worklog-2') && !w.id.startsWith('worklog-3') && !w.id.startsWith('worklog-4') && !w.id.startsWith('worklog-5'));
+      if (cleaned.length !== parsed.length) {
+        localStorage.setItem(localKey, JSON.stringify(cleaned));
+      }
+      return { worklogs: cleaned, isCloud: false };
     }
   } catch (e) {
     console.error('Error reading local worklogs', e);
   }
 
-  const initial = INITIAL_WORKLOGS;
-  localStorage.setItem(localKey, JSON.stringify(initial));
-  return { worklogs: initial, isCloud: false };
+  return { worklogs: [], isCloud: false };
 }
 
 export async function syncSaveWorkLog(userId: string, log: WorkLog): Promise<boolean> {

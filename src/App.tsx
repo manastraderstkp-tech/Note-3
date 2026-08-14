@@ -95,9 +95,9 @@ export default function App() {
   const [syncStatusText, setSyncStatusText] = useState<string>('');
 
   // Core Data Collections (User-Isolated)
-  const [notes, setNotes] = useState<Note[]>(INITIAL_NOTES);
-  const [tasks, setTasks] = useState<TodoTask[]>(INITIAL_TODOS);
-  const [worklogs, setWorklogs] = useState<WorkLog[]>(INITIAL_WORKLOGS);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [tasks, setTasks] = useState<TodoTask[]>([]);
+  const [worklogs, setWorklogs] = useState<WorkLog[]>([]);
 
   // Active Reminder In-App Toasts
   const [activeAlerts, setActiveAlerts] = useState<ActiveReminderAlert[]>([]);

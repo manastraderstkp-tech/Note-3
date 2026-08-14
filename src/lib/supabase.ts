@@ -10,41 +10,100 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL, EMAIL_REDIRECT_UR
 
 export { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL, EMAIL_REDIRECT_URL };
 
-// Storage keys for user session cache and profiles
+// Storage keys for custom client config and session
+const STORAGE_KEY_URL = 'workspace_supabase_url';
+const STORAGE_KEY_KEY = 'workspace_supabase_anon_key';
 const STORAGE_KEY_USER = 'workspace_current_user';
 const STORAGE_KEY_PROFILES = 'workspace_profiles_list';
 
+// Dynamic & Stored Supabase Config reader
+export function getStoredSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
+  let url = SUPABASE_URL;
+  let anonKey = SUPABASE_ANON_KEY;
+
+  try {
+    const localUrl = localStorage.getItem(STORAGE_KEY_URL);
+    const localKey = localStorage.getItem(STORAGE_KEY_KEY);
+    if (localUrl && localUrl.trim()) url = localUrl.trim();
+    if (localKey && localKey.trim()) anonKey = localKey.trim();
+  } catch {
+    // Ignore localStorage access issues in iframe/strict modes
+  }
+
+  const isConfigured = Boolean(
+    url &&
+    anonKey &&
+    !url.includes('your-project-ref') &&
+    !url.includes('your-project.supabase.co') &&
+    !anonKey.includes('your-anon-public-key') &&
+    url.startsWith('http')
+  );
+
+  return { url, anonKey, isConfigured };
+}
+
 // Check if valid live Supabase credentials are configured
 export function isSupabaseConfigured(): boolean {
-  return Boolean(
-    SUPABASE_URL &&
-    SUPABASE_ANON_KEY &&
-    !SUPABASE_URL.includes('your-project-ref') &&
-    !SUPABASE_ANON_KEY.includes('your-anon-public-key') &&
-    SUPABASE_URL.startsWith('http')
-  );
+  return getStoredSupabaseConfig().isConfigured;
 }
 
-// Fixed Global Supabase Config reader
-export function getStoredSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
-  return {
-    url: SUPABASE_URL,
-    anonKey: SUPABASE_ANON_KEY,
-    isConfigured: isSupabaseConfigured(),
-  };
-}
-
-// Single, centralized Supabase client instance for all users across pdcc.com.np
-export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-  },
-});
+let activeClient: SupabaseClient | null = null;
+let activeConfigString = '';
 
 export function getSupabase(): SupabaseClient {
-  return supabase;
+  const { url, anonKey } = getStoredSupabaseConfig();
+  const configSignature = `${url}_${anonKey}`;
+  if (!activeClient || activeConfigString !== configSignature) {
+    activeClient = createClient(url || 'https://placeholder.supabase.co', anonKey || 'placeholder', {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
+    activeConfigString = configSignature;
+  }
+  return activeClient;
+}
+
+export function saveSupabaseConfig(url: string, anonKey: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_URL, url.trim());
+    localStorage.setItem(STORAGE_KEY_KEY, anonKey.trim());
+  } catch (e) {
+    console.warn('Could not persist Supabase config to localStorage', e);
+  }
+  activeClient = null;
+  activeConfigString = '';
+}
+
+export function clearSupabaseConfig(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY_URL);
+    localStorage.removeItem(STORAGE_KEY_KEY);
+  } catch (e) {
+    console.warn('Could not clear Supabase config from localStorage', e);
+  }
+  activeClient = null;
+  activeConfigString = '';
+}
+
+// Helper to format friendly connection errors
+function formatSupabaseAuthError(err: unknown, defaultMsg: string): string {
+  const rawMsg = err instanceof Error ? err.message : String(err || defaultMsg);
+  const lower = rawMsg.toLowerCase();
+
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('networkerror') ||
+    lower.includes('network request failed') ||
+    lower.includes('err_name_not_resolved') ||
+    lower.includes('load failed')
+  ) {
+    return 'Unable to connect to Supabase backend. Please verify your Supabase URL and Anon Key in config.ts or click "Setup Supabase".';
+  }
+
+  return rawMsg;
 }
 
 // -----------------------------------------------------------------------------
@@ -304,7 +363,7 @@ export async function signUpUser(
       needsVerification: true,
     };
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : 'Error communicating with Supabase auth';
+    const errorMessage = formatSupabaseAuthError(err, 'Error communicating with Supabase auth');
     return { user: null, error: errorMessage };
   }
 }
@@ -348,7 +407,7 @@ export async function signInUser(
           unverified: true,
         };
       }
-      return { user: null, error: error.message };
+      return { user: null, error: formatSupabaseAuthError(error, error.message) };
     }
 
     if (!data.user) {
@@ -396,7 +455,7 @@ export async function signInUser(
     storeLocalUser(sessionUser);
     return { user: sessionUser, error: null };
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : 'Error logging into Supabase';
+    const errorMessage = formatSupabaseAuthError(err, 'Error logging into Supabase');
     return { user: null, error: errorMessage };
   }
 }
@@ -419,11 +478,11 @@ export async function resendVerificationEmail(email: string): Promise<{ success:
     });
 
     if (error) {
-      return { success: false, error: error.message };
+      return { success: false, error: formatSupabaseAuthError(error, error.message) };
     }
     return { success: true, error: null };
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Failed to resend confirmation email.';
+    const msg = formatSupabaseAuthError(err, 'Failed to resend confirmation email.');
     return { success: false, error: msg };
   }
 }

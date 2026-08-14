@@ -141,8 +141,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Authentication failed. Please check your credentials.';
-      setError(msg);
+      const raw = err instanceof Error ? err.message : String(err || '');
+      if (
+        raw.toLowerCase().includes('failed to fetch') ||
+        raw.toLowerCase().includes('network') ||
+        raw.toLowerCase().includes('err_name_not_resolved')
+      ) {
+        setError('Unable to connect to Supabase backend. Please verify your Supabase URL and Anon Key in config.ts.');
+      } else {
+        setError(raw || 'Authentication failed. Please check your credentials.');
+      }
     } finally {
       setLoading(false);
     }

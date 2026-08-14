@@ -29,12 +29,14 @@ interface AuthScreenProps {
   onSuccess: (user: UserSession) => void;
   isDark: boolean;
   onToggleTheme: () => void;
+  onOpenConfig?: () => void;
 }
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({
   onSuccess,
   isDark,
   onToggleTheme,
+  onOpenConfig,
 }) => {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
@@ -159,8 +161,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         }
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Authentication failed. Please try again.';
-      setError(msg);
+      const raw = err instanceof Error ? err.message : String(err || '');
+      if (
+        raw.toLowerCase().includes('failed to fetch') ||
+        raw.toLowerCase().includes('network') ||
+        raw.toLowerCase().includes('err_name_not_resolved')
+      ) {
+        setError('Unable to connect to Supabase backend. Please verify your Supabase URL and Anon Key in config.ts or click "Setup Supabase".');
+      } else {
+        setError(raw || 'Authentication failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -197,6 +207,19 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Supabase Config / Connect Backend button */}
+          {onOpenConfig && (
+            <button
+              id="btn-auth-screen-config"
+              onClick={onOpenConfig}
+              type="button"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-indigo-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-indigo-400"
+            >
+              <Database className="h-3.5 w-3.5 text-emerald-500" />
+              <span>{isConfigured ? 'Backend API' : 'Setup Supabase'}</span>
+            </button>
+          )}
+
           {/* Theme Toggle Button */}
           <button
             id="btn-auth-theme-toggle"

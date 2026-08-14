@@ -24,8 +24,17 @@ export function getStoredSupabaseConfig(): { url: string; anonKey: string; isCon
   try {
     const localUrl = localStorage.getItem(STORAGE_KEY_URL);
     const localKey = localStorage.getItem(STORAGE_KEY_KEY);
-    if (localUrl && localUrl.trim()) url = localUrl.trim();
-    if (localKey && localKey.trim()) anonKey = localKey.trim();
+    if (localUrl && localUrl.trim() && !localUrl.includes('your-project') && !localUrl.includes('placeholder')) {
+      url = localUrl.trim();
+    } else if (localUrl && (localUrl.includes('your-project') || localUrl.includes('placeholder'))) {
+      localStorage.removeItem(STORAGE_KEY_URL);
+    }
+
+    if (localKey && localKey.trim() && !localKey.includes('your-anon') && !localKey.includes('placeholder')) {
+      anonKey = localKey.trim();
+    } else if (localKey && (localKey.includes('your-anon') || localKey.includes('placeholder'))) {
+      localStorage.removeItem(STORAGE_KEY_KEY);
+    }
   } catch {
     // Ignore localStorage access issues in iframe/strict modes
   }
@@ -33,9 +42,9 @@ export function getStoredSupabaseConfig(): { url: string; anonKey: string; isCon
   const isConfigured = Boolean(
     url &&
     anonKey &&
-    !url.includes('your-project-ref') &&
-    !url.includes('your-project.supabase.co') &&
-    !anonKey.includes('your-anon-public-key') &&
+    !url.includes('your-project') &&
+    !url.includes('placeholder') &&
+    !anonKey.includes('your-anon') &&
     url.startsWith('http')
   );
 
@@ -54,7 +63,7 @@ export function getSupabase(): SupabaseClient {
   const { url, anonKey } = getStoredSupabaseConfig();
   const configSignature = `${url}_${anonKey}`;
   if (!activeClient || activeConfigString !== configSignature) {
-    activeClient = createClient(url || 'https://placeholder.supabase.co', anonKey || 'placeholder', {
+    activeClient = createClient(url, anonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
@@ -65,6 +74,9 @@ export function getSupabase(): SupabaseClient {
   }
   return activeClient;
 }
+
+// Direct centralized Supabase client instance
+export const supabase: SupabaseClient = getSupabase();
 
 export function saveSupabaseConfig(url: string, anonKey: string): void {
   try {

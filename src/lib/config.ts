@@ -10,11 +10,11 @@
 // Central Global Supabase Configuration
 export const SUPABASE_URL: string =
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_SUPABASE_URL ||
-  'https://your-project.supabase.co';
+  'https://kzlhrpcddsbbzcydowdr.supabase.co';
 
 export const SUPABASE_ANON_KEY: string =
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_SUPABASE_ANON_KEY ||
-  'your-anon-public-key';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt6bGhycGNkZHNiYnpjeWRvd2RyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwNzQzNzgsImV4cCI6MjEwMTY1MDM3OH0.hv8IaNDVKnRPT_BRGfdKzwwgAi_JIiUO0BYRSKhJSLs';
 
 // Designated default admin email for automatic RBAC bootstrap
 export const DEFAULT_ADMIN_EMAIL: string = 'manastraderstkp@gmail.com';

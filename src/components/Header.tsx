@@ -42,7 +42,6 @@ interface HeaderProps {
   onOpenAuth: (mode?: 'signin' | 'signup') => void;
   onSignOut: () => void;
   onOpenSqlModal: () => void;
-  onOpenConfigModal: () => void;
   onOpenSoundSettingsModal: () => void;
   onOpenDeployGuideModal: () => void;
   onOpenExportModal: (initialType?: 'all' | 'tasks' | 'worklogs' | 'notes') => void;
@@ -68,7 +67,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAuth,
   onSignOut,
   onOpenSqlModal,
-  onOpenConfigModal,
   onOpenSoundSettingsModal,
   onOpenDeployGuideModal,
   onOpenExportModal,
@@ -343,52 +341,8 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Right side: Export, Deploy Guide, Audio Sound, SQL Schema, Quick Add, Theme Toggle, Notifications, Profile */}
+      {/* Right side: Quick Add, Theme Toggle, Notifications, Profile */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Export Data Button */}
-        <button
-          id="btn-header-export-data"
-          onClick={() => onOpenExportModal('all')}
-          title="Export Tasks & Work Logs to CSV or PDF"
-          className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs font-semibold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-700 sm:px-3 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-750 dark:hover:text-indigo-300"
-        >
-          <FileDown className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-          <span className="hidden sm:inline">Export</span>
-        </button>
-
-        {/* GitHub & Deploy Guide trigger */}
-        <button
-          id="btn-header-deploy-guide"
-          onClick={onOpenDeployGuideModal}
-          title="GitHub & Production Deployment Guide"
-          className="hidden xl:flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-750 dark:hover:text-indigo-300"
-        >
-          <Github className="h-3.5 w-3.5 text-slate-800 dark:text-slate-200" />
-          <span>Deploy to GitHub</span>
-        </button>
-
-        {/* Audio Sound Settings Trigger */}
-        <button
-          id="btn-header-sound-settings"
-          onClick={onOpenSoundSettingsModal}
-          title="Configure Audio Alerts & Reminders"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 sm:h-10 sm:w-10 dark:border-slate-700/80 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
-          aria-label="Sound Notification Settings"
-        >
-          <Volume2 className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-        </button>
-
-        {/* SQL Schema trigger button */}
-        <button
-          id="btn-header-sql-schema"
-          onClick={onOpenSqlModal}
-          title="View Supabase SQL Schema & RLS Policies"
-          className="hidden lg:flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-750"
-        >
-          <Database className="h-3.5 w-3.5 text-emerald-500" />
-          <span>SQL Schema</span>
-        </button>
-
         {/* Quick Add Dropdown */}
         <div className="relative">
           <button
@@ -675,18 +629,6 @@ export const Header: React.FC<HeaderProps> = ({
                   >
                     <Database className="h-3.5 w-3.5 text-emerald-500" />
                     <span>Supabase SQL & RBAC Schema</span>
-                  </button>
-
-                  <button
-                    id="btn-menu-supabase-keys"
-                    onClick={() => {
-                      onOpenConfigModal();
-                      setShowProfileMenu(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
-                  >
-                    <KeyRound className="h-3.5 w-3.5 text-indigo-500" />
-                    <span>Supabase API Credentials</span>
                   </button>
 
                   <button

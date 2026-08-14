@@ -6,92 +6,45 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Note, TodoTask, WorkLog, UserSession, UserRole, UserProfile } from '../types';
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from '../data/initialData';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL } from './config';
 
-// Storage keys for custom client config
-const STORAGE_KEY_URL = 'workspace_supabase_url';
-const STORAGE_KEY_KEY = 'workspace_supabase_anon_key';
+export { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL };
+
+// Storage keys for user session cache and profiles
 const STORAGE_KEY_USER = 'workspace_current_user';
 const STORAGE_KEY_PROFILES = 'workspace_profiles_list';
 
-// Default designated Admin email
-export const DEFAULT_ADMIN_EMAIL = 'manastraderstkp@gmail.com';
-
-// Get current credentials (from env or localStorage)
-export function getStoredSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
-  let url = '';
-  let anonKey = '';
-
-  try {
-    const metaEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
-    const envUrl = metaEnv?.VITE_SUPABASE_URL;
-    const envKey = metaEnv?.VITE_SUPABASE_ANON_KEY;
-    const localUrl = localStorage.getItem(STORAGE_KEY_URL);
-    const localKey = localStorage.getItem(STORAGE_KEY_KEY);
-
-    url = (localUrl || envUrl || '').trim();
-    anonKey = (localKey || envKey || '').trim();
-  } catch (e) {
-    console.warn('Unable to read environment or storage for Supabase credentials', e);
-  }
-
-  const isConfigured = Boolean(
-    url &&
-    anonKey &&
-    !url.includes('your-project-ref') &&
-    !anonKey.includes('your-anon-public-key') &&
-    url.startsWith('http')
+// Check if valid live Supabase credentials are configured
+export function isSupabaseConfigured(): boolean {
+  return Boolean(
+    SUPABASE_URL &&
+    SUPABASE_ANON_KEY &&
+    !SUPABASE_URL.includes('your-project-ref') &&
+    !SUPABASE_ANON_KEY.includes('your-anon-public-key') &&
+    SUPABASE_URL.startsWith('http')
   );
-
-  return { url, anonKey, isConfigured };
 }
 
-// Global Supabase client instance
-let supabaseClientInstance: SupabaseClient | null = null;
-
-export function getSupabase(): SupabaseClient | null {
-  const { url, anonKey, isConfigured } = getStoredSupabaseConfig();
-
-  if (!isConfigured) {
-    return null;
-  }
-
-  if (!supabaseClientInstance) {
-    try {
-      supabaseClientInstance = createClient(url, anonKey, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-        },
-      });
-    } catch (err) {
-      console.error('Failed to initialize Supabase client:', err);
-      return null;
-    }
-  }
-
-  return supabaseClientInstance;
+// Fixed Global Supabase Config reader
+export function getStoredSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
+  return {
+    url: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    isConfigured: isSupabaseConfigured(),
+  };
 }
 
-// Update configuration dynamically
-export function saveSupabaseConfig(url: string, anonKey: string) {
-  try {
-    localStorage.setItem(STORAGE_KEY_URL, url.trim());
-    localStorage.setItem(STORAGE_KEY_KEY, anonKey.trim());
-    supabaseClientInstance = null; // reset client to re-initialize
-  } catch (err) {
-    console.error('Failed to save Supabase credentials to storage', err);
-  }
-}
+// Single, centralized Supabase client instance for all users across pdcc.com.np
+export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
 
-export function clearSupabaseConfig() {
-  try {
-    localStorage.removeItem(STORAGE_KEY_URL);
-    localStorage.removeItem(STORAGE_KEY_KEY);
-    supabaseClientInstance = null;
-  } catch (err) {
-    console.error('Failed to clear Supabase config', err);
-  }
+export function getSupabase(): SupabaseClient {
+  return supabase;
 }
 
 // -----------------------------------------------------------------------------
@@ -572,6 +525,7 @@ export async function syncFetchNotes(userId: string): Promise<{ notes: Note[]; i
       const { data, error } = await supabase
         .from('notes')
         .select('*')
+        .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (!error && data) {
@@ -655,7 +609,7 @@ export async function syncDeleteNote(userId: string, noteId: string): Promise<bo
   const supabase = getSupabase();
   if (supabase) {
     try {
-      const { error } = await supabase.from('notes').delete().eq('id', noteId);
+      const { error } = await supabase.from('notes').delete().eq('id', noteId).eq('user_id', userId);
       if (error) {
         console.warn('Supabase delete note warning:', error.message);
       }
@@ -676,6 +630,7 @@ export async function syncFetchTodos(userId: string): Promise<{ todos: TodoTask[
       const { data, error } = await supabase
         .from('todos')
         .select('*')
+        .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (!error && data) {
@@ -754,7 +709,7 @@ export async function syncDeleteTodo(userId: string, todoId: string): Promise<bo
   const supabase = getSupabase();
   if (supabase) {
     try {
-      const { error } = await supabase.from('todos').delete().eq('id', todoId);
+      const { error } = await supabase.from('todos').delete().eq('id', todoId).eq('user_id', userId);
       if (error) {
         console.warn('Supabase delete todo warning:', error.message);
       }
@@ -775,6 +730,7 @@ export async function syncFetchWorkLogs(userId: string): Promise<{ worklogs: Wor
       const { data, error } = await supabase
         .from('work_logs')
         .select('*')
+        .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (!error && data) {
@@ -852,7 +808,7 @@ export async function syncDeleteWorkLog(userId: string, logId: string): Promise<
   const supabase = getSupabase();
   if (supabase) {
     try {
-      const { error } = await supabase.from('work_logs').delete().eq('id', logId);
+      const { error } = await supabase.from('work_logs').delete().eq('id', logId).eq('user_id', userId);
       if (error) {
         console.warn('Supabase delete work log warning:', error.message);
       }

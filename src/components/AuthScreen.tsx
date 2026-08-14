@@ -26,14 +26,12 @@ interface AuthScreenProps {
   onSuccess: (user: UserSession) => void;
   isDark: boolean;
   onToggleTheme: () => void;
-  onOpenConfig?: () => void;
 }
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({
   onSuccess,
   isDark,
   onToggleTheme,
-  onOpenConfig,
 }) => {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
@@ -137,19 +135,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {onOpenConfig && (
-            <button
-              id="btn-auth-screen-config"
-              onClick={onOpenConfig}
-              type="button"
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-              title="Configure Supabase Database & Auth"
-            >
-              <Database className="h-3.5 w-3.5 text-indigo-500" />
-              <span className="hidden sm:inline">Backend API</span>
-            </button>
-          )}
-
           {/* Theme Toggle Button */}
           <button
             id="btn-auth-theme-toggle"

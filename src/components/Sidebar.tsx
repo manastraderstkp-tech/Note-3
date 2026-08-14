@@ -36,7 +36,6 @@ interface SidebarProps {
   availableCategories: string[];
   currentUser: UserSession | null;
   onOpenSqlModal: () => void;
-  onOpenConfigModal: () => void;
   onOpenSoundSettingsModal: () => void;
   onOpenDeployGuideModal: () => void;
   onOpenExportModal: (initialType?: 'all' | 'tasks' | 'worklogs' | 'notes') => void;
@@ -55,7 +54,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   availableCategories,
   currentUser,
   onOpenSqlModal,
-  onOpenConfigModal,
   onOpenSoundSettingsModal,
   onOpenDeployGuideModal,
   onOpenExportModal,
@@ -293,20 +291,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
             Isolated per user ID via PostgreSQL Row Level Security.
           </p>
-          <div className="mt-2.5 flex items-center gap-1.5">
+          <div className="mt-2.5">
             <button
               id="btn-sidebar-sql-modal"
               onClick={onOpenSqlModal}
-              className="flex-1 rounded-lg bg-white py-1.5 text-center text-[11px] font-semibold text-slate-700 shadow-xs hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-750"
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-white py-1.5 text-center text-[11px] font-semibold text-slate-700 shadow-xs hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-750"
             >
-              SQL Schema
-            </button>
-            <button
-              id="btn-sidebar-config-modal"
-              onClick={onOpenConfigModal}
-              className="flex-1 rounded-lg bg-white py-1.5 text-center text-[11px] font-semibold text-slate-700 shadow-xs hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-750"
-            >
-              API Keys
+              <Database className="h-3 w-3 text-emerald-500" />
+              <span>SQL Schema & RLS Policies</span>
             </button>
           </div>
         </div>

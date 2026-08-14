@@ -16,7 +16,6 @@ import { WorkLogModal } from './components/WorkLogModal';
 import { AuthModal } from './components/AuthModal';
 import { AuthScreen } from './components/AuthScreen';
 import { SqlSchemaModal } from './components/SqlSchemaModal';
-import { SupabaseConfigModal } from './components/SupabaseConfigModal';
 import { NotificationSettingsModal } from './components/NotificationSettingsModal';
 import { DeployGuideModal } from './components/DeployGuideModal';
 import { ExportModal } from './components/ExportModal';
@@ -119,7 +118,6 @@ export default function App() {
   });
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signup');
   const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [isSoundSettingsOpen, setIsSoundSettingsOpen] = useState(false);
   const [isDeployGuideOpen, setIsDeployGuideOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -653,25 +651,11 @@ export default function App() {
   // If user is NOT logged in, hide dashboard & navigation completely and display modern Sign In / Sign Up Screen
   if (!currentUser) {
     return (
-      <>
-        <AuthScreen
-          onSuccess={handleAuthSuccess}
-          isDark={isDark}
-          onToggleTheme={toggleTheme}
-          onOpenConfig={() => setIsConfigModalOpen(true)}
-        />
-
-        {/* Supabase Connection Setup Modal from Auth Screen */}
-        <SupabaseConfigModal
-          isOpen={isConfigModalOpen}
-          onClose={() => setIsConfigModalOpen(false)}
-          onConfigUpdated={() => {
-            getInitialSupabaseSession().then((u) => {
-              if (u) setCurrentUser(u);
-            });
-          }}
-        />
-      </>
+      <AuthScreen
+        onSuccess={handleAuthSuccess}
+        isDark={isDark}
+        onToggleTheme={toggleTheme}
+      />
     );
   }
 
@@ -693,7 +677,6 @@ export default function App() {
         availableCategories={availableCategories}
         currentUser={currentUser}
         onOpenSqlModal={() => setIsSqlModalOpen(true)}
-        onOpenConfigModal={() => setIsConfigModalOpen(true)}
         onOpenSoundSettingsModal={() => setIsSoundSettingsOpen(true)}
         onOpenDeployGuideModal={() => setIsDeployGuideOpen(true)}
         onOpenExportModal={handleOpenExportModal}
@@ -719,7 +702,6 @@ export default function App() {
           onOpenAuth={handleOpenAuth}
           onSignOut={handleSignOut}
           onOpenSqlModal={() => setIsSqlModalOpen(true)}
-          onOpenConfigModal={() => setIsConfigModalOpen(true)}
           onOpenSoundSettingsModal={() => setIsSoundSettingsOpen(true)}
           onOpenDeployGuideModal={() => setIsDeployGuideOpen(true)}
           onOpenExportModal={handleOpenExportModal}
@@ -759,51 +741,6 @@ export default function App() {
                 ? 'Full System Analytics & Role Management Active'
                 : 'User-Isolated Storage & Personal Scope Active'}
             </span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {currentUser?.role === 'admin' && (
-              <>
-                <button
-                  onClick={() => setIsUserRolesModalOpen(true)}
-                  className="flex items-center gap-1 font-bold text-amber-600 hover:underline dark:text-amber-400"
-                >
-                  <Crown className="h-3.5 w-3.5" />
-                  <span>Manage User Roles</span>
-                </button>
-                <span className="text-slate-300 dark:text-slate-700">|</span>
-              </>
-            )}
-            <button
-              onClick={() => handleOpenExportModal('all')}
-              className="flex items-center gap-1 font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
-            >
-              <span>Export CSV / PDF</span>
-            </button>
-            <span className="text-slate-300 dark:text-slate-700">|</span>
-            <button
-              onClick={() => setIsSoundSettingsOpen(true)}
-              className="flex items-center gap-1 font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
-            >
-              <Volume2 className="h-3.5 w-3.5" />
-              <span>Sound Alerts</span>
-            </button>
-            <span className="text-slate-300 dark:text-slate-700">|</span>
-            <button
-              onClick={() => setIsDeployGuideOpen(true)}
-              className="flex items-center gap-1 font-semibold text-slate-700 hover:underline dark:text-slate-300"
-            >
-              <Github className="h-3.5 w-3.5" />
-              <span>Deploy Guide</span>
-            </button>
-            <span className="text-slate-300 dark:text-slate-700">|</span>
-            <button
-              onClick={() => setIsSqlModalOpen(true)}
-              className="flex items-center gap-1 font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
-            >
-              <Database className="h-3.5 w-3.5" />
-              <span>SQL Schema</span>
-            </button>
           </div>
         </div>
 
@@ -947,24 +884,12 @@ export default function App() {
         onClose={() => setIsAuthModalOpen(false)}
         onSuccess={handleAuthSuccess}
         initialMode={authModalMode}
-        onOpenConfig={() => setIsConfigModalOpen(true)}
       />
 
       {/* SQL Schema & RLS Policies Modal */}
       <SqlSchemaModal
         isOpen={isSqlModalOpen}
         onClose={() => setIsSqlModalOpen(false)}
-      />
-
-      {/* Supabase Connection Setup Modal */}
-      <SupabaseConfigModal
-        isOpen={isConfigModalOpen}
-        onClose={() => setIsConfigModalOpen(false)}
-        onConfigUpdated={() => {
-          if (currentUser) {
-            loadUserData(currentUser);
-          }
-        }}
       />
 
       {/* Note Form Modal */}

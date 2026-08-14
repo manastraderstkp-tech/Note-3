@@ -440,6 +440,33 @@ export async function signOutUser(): Promise<void> {
   }
 }
 
+export async function getInitialSupabaseSession(): Promise<UserSession | null> {
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (!error && session?.user) {
+        const userEmail = session.user.email || '';
+        const fullName = session.user.user_metadata?.full_name || userEmail.split('@')[0];
+        const { role } = await fetchUserProfile(session.user.id, userEmail, fullName);
+        const sessionUser: UserSession = {
+          id: session.user.id,
+          email: userEmail,
+          fullName,
+          role,
+          isDemo: false,
+          createdAt: session.user.created_at,
+        };
+        storeLocalUser(sessionUser);
+        return sessionUser;
+      }
+    } catch (e) {
+      console.warn('Error getting initial Supabase session', e);
+    }
+  }
+  return getCurrentStoredUser();
+}
+
 export function getCurrentStoredUser(): UserSession | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_USER);

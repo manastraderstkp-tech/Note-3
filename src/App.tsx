@@ -14,6 +14,7 @@ import { NoteModal } from './components/NoteModal';
 import { TodoModal } from './components/TodoModal';
 import { WorkLogModal } from './components/WorkLogModal';
 import { AuthModal } from './components/AuthModal';
+import { AuthScreen } from './components/AuthScreen';
 import { SqlSchemaModal } from './components/SqlSchemaModal';
 import { SupabaseConfigModal } from './components/SupabaseConfigModal';
 import { NotificationSettingsModal } from './components/NotificationSettingsModal';
@@ -26,6 +27,7 @@ import { Note, TodoTask, WorkLog, NavSection, MetricStats, TaskStatus, UserSessi
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from './data/initialData';
 import {
   getCurrentStoredUser,
+  getInitialSupabaseSession,
   createInitialAdminSession,
   signOutUser,
   getSupabase,
@@ -81,10 +83,11 @@ export default function App() {
     setIsDark((prev) => !prev);
   };
 
-  // User Authentication State (defaults to stored session or null for first time visitor)
+  // User Authentication State
   const [currentUser, setCurrentUser] = useState<UserSession | null>(() => {
     return getCurrentStoredUser();
   });
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
 
   // Primary navigation state
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard');
@@ -131,12 +134,38 @@ export default function App() {
     setIsExportModalOpen(true);
   };
 
-  // Supabase Auth listener
+  // Supabase Auth listener and Initial Session Check
   useEffect(() => {
+    let isMounted = true;
+
+    // Check initial Supabase session on mount (route guard)
+    const initAuth = async () => {
+      try {
+        const sessionUser = await getInitialSupabaseSession();
+        if (isMounted) {
+          setCurrentUser(sessionUser);
+        }
+      } catch (err) {
+        console.warn('Error verifying session:', err);
+      } finally {
+        if (isMounted) {
+          setAuthChecking(false);
+        }
+      }
+    };
+
+    initAuth();
+
+    // Listen to real-time auth state changes without needing manual page refresh
     const client = getSupabase();
     if (client) {
       const { data: authListener } = client.auth.onAuthStateChange(async (event, session) => {
-        if (session?.user) {
+        if (event === 'SIGNED_OUT') {
+          if (isMounted) {
+            setCurrentUser(null);
+            setAuthChecking(false);
+          }
+        } else if (session?.user) {
           const userEmail = session.user.email || '';
           const fullName = session.user.user_metadata?.full_name || userEmail.split('@')[0];
           // Fetch role dynamically from profiles table
@@ -147,14 +176,21 @@ export default function App() {
             fullName,
             role,
             isDemo: false,
+            createdAt: session.user.created_at,
           };
-          setCurrentUser(sessionUser);
+          if (isMounted) {
+            setCurrentUser(sessionUser);
+            setAuthChecking(false);
+          }
         }
       });
 
       return () => {
+        isMounted = false;
         authListener.subscription.unsubscribe();
       };
+    } else {
+      setAuthChecking(false);
     }
   }, []);
 
@@ -417,12 +453,13 @@ export default function App() {
   // Auth Handlers
   const handleAuthSuccess = (user: UserSession) => {
     setCurrentUser(user);
+    setAuthChecking(false);
+    setIsAuthModalOpen(false);
   };
 
   const handleSignOut = async () => {
     await signOutUser();
     setCurrentUser(null);
-    setIsAuthModalOpen(true);
   };
 
   const handleOpenAuth = (mode: 'signin' | 'signup' = 'signin') => {
@@ -599,6 +636,47 @@ export default function App() {
   };
 
   const { isConfigured } = getStoredSupabaseConfig();
+
+  // Authentication First Route Guard:
+  // If verifying session status, show initial loader
+  if (authChecking) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 text-slate-800 transition-colors dark:bg-slate-950 dark:text-slate-200">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 animate-pulse">
+          <Database className="h-6 w-6" />
+        </div>
+        <div className="mb-2.5 h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+        <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+          Checking Workspace Authentication...
+        </p>
+      </div>
+    );
+  }
+
+  // If user is NOT logged in, hide dashboard & navigation completely and display modern Sign In / Sign Up Screen
+  if (!currentUser) {
+    return (
+      <>
+        <AuthScreen
+          onSuccess={handleAuthSuccess}
+          isDark={isDark}
+          onToggleTheme={toggleTheme}
+          onOpenConfig={() => setIsConfigModalOpen(true)}
+        />
+
+        {/* Supabase Connection Setup Modal from Auth Screen */}
+        <SupabaseConfigModal
+          isOpen={isConfigModalOpen}
+          onClose={() => setIsConfigModalOpen(false)}
+          onConfigUpdated={() => {
+            getInitialSupabaseSession().then((u) => {
+              if (u) setCurrentUser(u);
+            });
+          }}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-slate-50 font-sans antialiased selection:bg-indigo-500 selection:text-white dark:bg-slate-950 dark:text-slate-100">

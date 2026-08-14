@@ -1,0 +1,99 @@
+export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs';
+
+export type UserRole = 'admin' | 'user';
+
+export type TaskStatus = 'pending' | 'in_progress' | 'completed';
+export type TaskPriority = 'high' | 'medium' | 'low';
+
+export type SoundProfile = 'chime' | 'pulse' | 'fanfare' | 'marimba';
+
+export interface NotificationSettings {
+  soundEnabled: boolean;
+  soundProfile: SoundProfile;
+  volume: number; // 0 to 1
+  browserNotificationsEnabled: boolean;
+}
+
+export interface ActiveReminderAlert {
+  id: string;
+  itemId: string;
+  type: 'note' | 'todo';
+  title: string;
+  description?: string;
+  category?: string;
+  scheduledTime: string;
+  triggeredAt: string;
+  priority?: TaskPriority;
+}
+
+export interface UserSession {
+  id: string;
+  email: string;
+  fullName?: string;
+  role: UserRole; // 'admin' | 'user'
+  isDemo?: boolean;
+  createdAt?: string;
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  fullName?: string;
+  role: UserRole;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SupabaseConfig {
+  url: string;
+  anonKey: string;
+  isConfigured: boolean;
+}
+
+export interface Note {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  category: string;
+  colorScheme?: 'default' | 'indigo' | 'amber' | 'emerald' | 'rose' | 'sky';
+  isPinned: boolean;
+  notifyAt?: string; // ISO datetime string e.g. 2026-08-14T14:30
+  notified?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TodoTask {
+  id: string;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate: string; // YYYY-MM-DD
+  notifyAt?: string; // ISO datetime string e.g. 2026-08-14T14:30
+  notified?: boolean;
+  category: string;
+  createdAt: string;
+}
+
+export interface WorkLog {
+  id: string;
+  projectName: string;
+  taskDescription: string;
+  hoursSpent: number; // in decimal hours e.g. 2.5
+  date: string; // YYYY-MM-DD
+  startTime?: string; // e.g. "09:30 AM"
+  endTime?: string; // e.g. "12:00 PM"
+  category: string;
+  createdAt: string;
+}
+
+export interface MetricStats {
+  totalNotes: number;
+  pendingTasks: number;
+  inProgressTasks: number;
+  completedTasks: number;
+  hoursLoggedToday: number;
+  totalHoursWeek: number;
+}

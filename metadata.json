@@ -1,0 +1,7 @@
+{
+  "name": "WorkSpace - Notes, Tasks & Work Logs",
+  "description": "An executive productivity workspace featuring Role-Based Access Control (RBAC), Supabase authentication, 7-day Chart.js work hour analytics, real-time global search, and CSV/PDF data exports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

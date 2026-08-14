@@ -14,7 +14,7 @@ import {
   AlertCircle,
   KeyRound
 } from 'lucide-react';
-import { signInUser, signUpUser, createDemoUserSession, getStoredSupabaseConfig } from '../lib/supabase';
+import { signInUser, signUpUser, getStoredSupabaseConfig } from '../lib/supabase';
 import { UserSession } from '../types';
 
 interface AuthModalProps {
@@ -35,8 +35,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -58,6 +60,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     if (password.length < 6) {
       setError('Password must be at least 6 characters.');
       return;
+    }
+
+    if (mode === 'signup') {
+      if (!confirmPassword.trim()) {
+        setError('Please verify and confirm your password.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Passwords do not match. Please re-check both password fields.');
+        return;
+      }
     }
 
     setLoading(true);
@@ -90,12 +103,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickDemo = () => {
-    const demoUser = createDemoUserSession('manastraderstkp@gmail.com', 'Manas Traders');
-    onSuccess(demoUser);
-    onClose();
   };
 
   return (
@@ -200,7 +207,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="e.g. Alex Morgan"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:placeholder-slate-500"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder-slate-500 dark:focus:border-indigo-400 dark:focus:bg-slate-900"
                   />
                 </div>
               </div>
@@ -221,7 +228,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="alex@workspace.app"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:placeholder-slate-500"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder-slate-400 transition focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder-slate-500 dark:focus:border-indigo-400 dark:focus:bg-slate-900"
                 />
               </div>
             </div>
@@ -241,7 +248,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-10 text-sm text-slate-900 placeholder-slate-400 transition focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:placeholder-slate-500"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-10 text-sm text-slate-900 placeholder-slate-400 transition focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder-slate-500 dark:focus:border-indigo-400 dark:focus:bg-slate-900"
                 />
                 <button
                   type="button"
@@ -253,6 +260,53 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </button>
               </div>
             </div>
+
+            {mode === 'signup' && (
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Verify Password
+                  </label>
+                  {confirmPassword && (
+                    <span
+                      className={`text-[11px] font-semibold ${
+                        password === confirmPassword ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
+                      }`}
+                    >
+                      {password === confirmPassword ? '✓ Passwords match' : '✗ Passwords do not match'}
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                    <Lock className="h-4 w-4" />
+                  </div>
+                  <input
+                    id="input-auth-confirm-password"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Repeat your password"
+                    className={`w-full rounded-xl border bg-slate-50 py-2.5 pl-9 pr-10 text-sm text-slate-900 placeholder-slate-400 transition focus:bg-white focus:outline-none focus:ring-2 dark:bg-slate-800 dark:text-white dark:placeholder-slate-500 dark:focus:bg-slate-900 ${
+                      confirmPassword && password !== confirmPassword
+                        ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20 dark:border-rose-800'
+                        : confirmPassword && password === confirmPassword
+                        ? 'border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20 dark:border-emerald-700'
+                        : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500/20 dark:border-slate-700 dark:focus:border-indigo-400'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                  >
+                    {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <button
               id="btn-auth-submit"
@@ -271,35 +325,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </button>
           </form>
 
-          {/* Quick Demo Option */}
+          {/* Supabase Connection & Privacy Info */}
           <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <div className="flex items-center justify-between gap-2">
+            {onOpenConfig && (
               <button
-                id="btn-quick-demo-login"
+                id="btn-open-config-from-auth"
                 type="button"
-                onClick={handleQuickDemo}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-750"
+                onClick={() => {
+                  onClose();
+                  onOpenConfig();
+                }}
+                title="Configure Supabase Project Credentials"
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
               >
-                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                <span>Instant Demo Login</span>
+                <KeyRound className="h-3.5 w-3.5 text-indigo-500" />
+                <span>Configure Supabase Cloud Backend</span>
               </button>
-
-              {onOpenConfig && (
-                <button
-                  id="btn-open-config-from-auth"
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenConfig();
-                  }}
-                  title="Configure Supabase Project Credentials"
-                  className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                >
-                  <KeyRound className="h-3.5 w-3.5 text-indigo-500" />
-                  <span className="hidden sm:inline">Supabase API</span>
-                </button>
-              )}
-            </div>
+            )}
             <p className="mt-2 text-center text-[11px] text-slate-400">
               Each user only sees their own isolated notes, todos, and work logs.
             </p>

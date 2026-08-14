@@ -257,21 +257,14 @@ function getLocalProfiles(): UserProfile[] {
     console.error('Error reading local profiles', e);
   }
 
-  // Default seeded list for demo
+  // Initial administrator profile
   const defaults: UserProfile[] = [
     {
-      id: 'demo_user_architect_14309',
-      email: 'manastraderstkp@gmail.com',
+      id: 'admin_workspace_owner',
+      email: DEFAULT_ADMIN_EMAIL.toLowerCase(),
       fullName: 'Manas Traders (Admin)',
       role: 'admin',
       createdAt: '2026-08-01T10:00:00Z',
-    },
-    {
-      id: 'usr_standard_demo_2026',
-      email: 'alex.standard@workspace.app',
-      fullName: 'Alex Morgan (Standard)',
-      role: 'user',
-      createdAt: '2026-08-05T14:30:00Z',
     },
   ];
   localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(defaults));
@@ -498,38 +491,20 @@ export function getLocalRegisteredUsers(): UserSession[] {
   }
 }
 
-export function createDemoUserSession(
+export function createInitialAdminSession(
   email = DEFAULT_ADMIN_EMAIL,
-  name = 'Manas Traders (Admin)',
-  role: UserRole = 'admin'
+  name = 'Manas Traders (Admin)'
 ): UserSession {
-  const demoUser: UserSession = {
-    id: 'demo_user_architect_14309',
-    email,
+  const adminUser: UserSession = {
+    id: `usr_${email.replace(/[^a-zA-Z0-9]/g, '_')}`,
+    email: email.toLowerCase(),
     fullName: name,
-    role,
-    isDemo: true,
+    role: 'admin',
+    isDemo: false,
     createdAt: '2026-08-01T10:00:00Z',
   };
-  storeLocalUser(demoUser);
-  return demoUser;
-}
-
-export function createStandardDemoUserSession(
-  email = 'alex.standard@workspace.app',
-  name = 'Alex Morgan (Standard)',
-  role: UserRole = 'user'
-): UserSession {
-  const demoUser: UserSession = {
-    id: 'usr_standard_demo_2026',
-    email,
-    fullName: name,
-    role,
-    isDemo: true,
-    createdAt: '2026-08-05T14:30:00Z',
-  };
-  storeLocalUser(demoUser);
-  return demoUser;
+  storeLocalUser(adminUser);
+  return adminUser;
 }
 
 // -----------------------------------------------------------------------------

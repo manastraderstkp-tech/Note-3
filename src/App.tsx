@@ -26,8 +26,7 @@ import { Note, TodoTask, WorkLog, NavSection, MetricStats, TaskStatus, UserSessi
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from './data/initialData';
 import {
   getCurrentStoredUser,
-  createDemoUserSession,
-  createStandardDemoUserSession,
+  createInitialAdminSession,
   signOutUser,
   getSupabase,
   getStoredSupabaseConfig,
@@ -82,11 +81,9 @@ export default function App() {
     setIsDark((prev) => !prev);
   };
 
-  // User Authentication State
+  // User Authentication State (defaults to stored session or null for first time visitor)
   const [currentUser, setCurrentUser] = useState<UserSession | null>(() => {
-    const stored = getCurrentStoredUser();
-    if (stored) return stored;
-    return createDemoUserSession('manastraderstkp@gmail.com', 'Manas Traders');
+    return getCurrentStoredUser();
   });
 
   // Primary navigation state
@@ -116,8 +113,11 @@ export default function App() {
   const [editingWorkLog, setEditingWorkLog] = useState<WorkLog | null>(null);
   const [prefilledHours, setPrefilledHours] = useState<number | undefined>(undefined);
 
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
+  // Automatically open Sign Up modal on first visit if no user is logged in
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(() => {
+    return !getCurrentStoredUser();
+  });
+  const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signup');
   const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [isSoundSettingsOpen, setIsSoundSettingsOpen] = useState(false);

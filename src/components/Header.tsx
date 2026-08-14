@@ -578,7 +578,7 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-400 dark:text-slate-500">
-                  {currentUser.isDemo ? 'Demo Mode' : isConfigured ? 'Supabase Synced' : 'Local User'}
+                  {isConfigured ? 'Supabase Synced' : 'Active Session'}
                 </p>
               </div>
               <ChevronDown className="hidden h-3.5 w-3.5 text-slate-400 sm:block" />
@@ -723,7 +723,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="btn-header-signin"
               onClick={() => onOpenAuth('signin')}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition active:scale-95"
             >
               <LogIn className="h-3.5 w-3.5" />
               <span>Sign In</span>
@@ -731,9 +731,10 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="btn-header-signup"
               onClick={() => onOpenAuth('signup')}
-              className="hidden sm:flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm"
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm shadow-indigo-600/30 hover:bg-indigo-700 transition active:scale-95"
             >
-              <span>Get Started</span>
+              <UserPlus className="h-3.5 w-3.5" />
+              <span>Sign Up</span>
             </button>
           </div>
         )}

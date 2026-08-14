@@ -14,10 +14,38 @@
   .dark * {
     border-color: var(--color-slate-800, #1e293b);
   }
+  html.dark {
+    color-scheme: dark;
+  }
   body {
     @apply antialiased text-slate-900 bg-slate-50 dark:bg-slate-950 dark:text-slate-100 selection:bg-indigo-500/20 selection:text-indigo-600 dark:selection:bg-indigo-400/30 dark:selection:text-indigo-300;
     font-family: var(--font-sans);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Form controls color contrast in dark mode */
+  .dark input,
+  .dark textarea,
+  .dark select {
+    color-scheme: dark;
+  }
+
+  .dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  .dark textarea,
+  .dark select {
+    color: #f8fafc;
+  }
+
+  .dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+  .dark textarea:focus,
+  .dark select:focus {
+    background-color: #0f172a;
+    color: #ffffff;
+  }
+
+  .dark select option {
+    background-color: #0f172a;
+    color: #f8fafc;
   }
 }
 

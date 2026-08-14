@@ -287,7 +287,8 @@ function saveLocalProfile(profile: UserProfile) {
 }
 
 // -----------------------------------------------------------------------------
-// Authentication Helper Operations
+// -----------------------------------------------------------------------------
+// Authentication Operations (Strict Supabase Auth with RLS)
 // -----------------------------------------------------------------------------
 
 export async function signUpUser(
@@ -298,67 +299,75 @@ export async function signUpUser(
   const supabase = getSupabase();
   const trimmedEmail = email.trim().toLowerCase();
 
-  if (supabase) {
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: trimmedEmail,
-        password,
-        options: {
-          data: {
-            full_name: fullName || trimmedEmail.split('@')[0],
-          },
-        },
-      });
-
-      if (error) {
-        return { user: null, error: error.message };
-      }
-
-      if (data.user) {
-        // Fetch role from profiles table (trigger creates row with role 'user')
-        const { role } = await fetchUserProfile(
-          data.user.id,
-          trimmedEmail,
-          data.user.user_metadata?.full_name || fullName
-        );
-
-        const sessionUser: UserSession = {
-          id: data.user.id,
-          email: data.user.email || trimmedEmail,
-          fullName: data.user.user_metadata?.full_name || fullName || trimmedEmail.split('@')[0],
-          role,
-          isDemo: false,
-          createdAt: data.user.created_at,
-        };
-        storeLocalUser(sessionUser);
-        return { user: sessionUser, error: null };
-      }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Error communicating with Supabase auth';
-      return { user: null, error: errorMessage };
-    }
+  if (!supabase) {
+    return {
+      user: null,
+      error: 'Supabase is not configured. Please click "Backend API" to enter your Supabase Project URL and Anon Key.',
+    };
   }
 
-  // Fallback / Offline local user registration if Supabase keys are not yet configured
-  const userId = `usr_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
-  const defaultRole: UserRole = trimmedEmail === DEFAULT_ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user';
-  const localUser: UserSession = {
-    id: userId,
-    email: trimmedEmail,
-    fullName: fullName || trimmedEmail.split('@')[0],
-    role: defaultRole,
-    isDemo: false,
-    createdAt: new Date().toISOString(),
-  };
-  storeLocalUser(localUser);
-  saveLocalProfile({
-    id: userId,
-    email: trimmedEmail,
-    fullName: localUser.fullName,
-    role: defaultRole,
-    createdAt: localUser.createdAt!,
-  });
-  return { user: localUser, error: null };
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email: trimmedEmail,
+      password,
+      options: {
+        data: {
+          full_name: fullName || trimmedEmail.split('@')[0],
+        },
+      },
+    });
+
+    if (error) {
+      if (error.message.toLowerCase().includes('already registered')) {
+        return {
+          user: null,
+          error: 'This email is already registered. Please switch to the Sign In tab to log in.',
+        };
+      }
+      return { user: null, error: error.message };
+    }
+
+    if (!data.user) {
+      return { user: null, error: 'Failed to create user account in Supabase.' };
+    }
+
+    // Check if account already existed (Supabase returns empty identities array when email is already taken)
+    if (data.user.identities && data.user.identities.length === 0) {
+      return {
+        user: null,
+        error: 'An account with this email address already exists. Please sign in instead.',
+      };
+    }
+
+    // If project requires email verification and session is null
+    if (!data.session) {
+      return {
+        user: null,
+        error: 'Account created! Please check your email inbox to confirm your address before signing in, or disable email confirmations in your Supabase Auth settings.',
+      };
+    }
+
+    // Fetch role from profiles table (trigger automatically assigns role in database)
+    const { role } = await fetchUserProfile(
+      data.user.id,
+      trimmedEmail,
+      data.user.user_metadata?.full_name || fullName
+    );
+
+    const sessionUser: UserSession = {
+      id: data.user.id,
+      email: data.user.email || trimmedEmail,
+      fullName: data.user.user_metadata?.full_name || fullName || trimmedEmail.split('@')[0],
+      role,
+      isDemo: false,
+      createdAt: data.user.created_at,
+    };
+    storeLocalUser(sessionUser);
+    return { user: sessionUser, error: null };
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'Error communicating with Supabase auth';
+    return { user: null, error: errorMessage };
+  }
 }
 
 export async function signInUser(
@@ -368,60 +377,66 @@ export async function signInUser(
   const supabase = getSupabase();
   const trimmedEmail = email.trim().toLowerCase();
 
-  if (supabase) {
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: trimmedEmail,
-        password,
-      });
-
-      if (error) {
-        return { user: null, error: error.message };
-      }
-
-      if (data.user) {
-        // Fetch role from profiles table
-        const { role } = await fetchUserProfile(
-          data.user.id,
-          trimmedEmail,
-          data.user.user_metadata?.full_name
-        );
-
-        const sessionUser: UserSession = {
-          id: data.user.id,
-          email: data.user.email || trimmedEmail,
-          fullName: data.user.user_metadata?.full_name || trimmedEmail.split('@')[0],
-          role,
-          isDemo: false,
-          createdAt: data.user.created_at,
-        };
-        storeLocalUser(sessionUser);
-        return { user: sessionUser, error: null };
-      }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Error logging into Supabase';
-      return { user: null, error: errorMessage };
-    }
+  if (!supabase) {
+    return {
+      user: null,
+      error: 'Supabase is not configured. Please click "Backend API" to enter your Supabase Project URL and Anon Key.',
+    };
   }
 
-  // Local fallback account authentication
-  const existingUsers = getLocalRegisteredUsers();
-  const matched = existingUsers.find((u) => u.email === trimmedEmail);
-  const defaultRole: UserRole = trimmedEmail === DEFAULT_ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user';
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: trimmedEmail,
+      password,
+    });
 
-  const sessionUser: UserSession = matched
-    ? { ...matched, role: matched.role || defaultRole }
-    : {
-        id: `usr_${trimmedEmail.replace(/[^a-zA-Z0-9]/g, '_')}`,
-        email: trimmedEmail,
-        fullName: trimmedEmail.split('@')[0],
-        role: defaultRole,
-        isDemo: false,
-        createdAt: new Date().toISOString(),
+    if (error) {
+      if (
+        error.message.toLowerCase().includes('invalid login credentials') ||
+        error.message.toLowerCase().includes('invalid credentials')
+      ) {
+        return {
+          user: null,
+          error: 'Invalid email or password. Please verify your credentials or sign up first.',
+        };
+      }
+      if (error.message.toLowerCase().includes('email not confirmed')) {
+        return {
+          user: null,
+          error: 'Email is not confirmed yet. Please verify your email or disable confirmation in Supabase Auth settings.',
+        };
+      }
+      return { user: null, error: error.message };
+    }
+
+    if (!data.session || !data.user) {
+      return {
+        user: null,
+        error: 'Authentication failed: No active session returned from Supabase. Please sign up first.',
       };
+    }
 
-  storeLocalUser(sessionUser);
-  return { user: sessionUser, error: null };
+    // Fetch verified role from profiles table inside Supabase
+    const { role } = await fetchUserProfile(
+      data.user.id,
+      trimmedEmail,
+      data.user.user_metadata?.full_name
+    );
+
+    const sessionUser: UserSession = {
+      id: data.user.id,
+      email: data.user.email || trimmedEmail,
+      fullName: data.user.user_metadata?.full_name || trimmedEmail.split('@')[0],
+      role,
+      isDemo: false,
+      createdAt: data.user.created_at,
+    };
+    storeLocalUser(sessionUser);
+    return { user: sessionUser, error: null };
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'Error logging into Supabase';
+    return { user: null, error: errorMessage };
+  }
 }
 
 export async function signOutUser(): Promise<void> {
@@ -444,38 +459,42 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
   const supabase = getSupabase();
   if (supabase) {
     try {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (!error && session?.user) {
-        const userEmail = session.user.email || '';
-        const fullName = session.user.user_metadata?.full_name || userEmail.split('@')[0];
-        const { role } = await fetchUserProfile(session.user.id, userEmail, fullName);
+      // Strictly verify session against Supabase server via getUser()
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (!error && user) {
+        const userEmail = user.email || '';
+        const fullName = user.user_metadata?.full_name || userEmail.split('@')[0];
+        const { role } = await fetchUserProfile(user.id, userEmail, fullName);
         const sessionUser: UserSession = {
-          id: session.user.id,
+          id: user.id,
           email: userEmail,
           fullName,
           role,
           isDemo: false,
-          createdAt: session.user.created_at,
+          createdAt: user.created_at,
         };
         storeLocalUser(sessionUser);
         return sessionUser;
+      } else {
+        // No valid user session in Supabase - purge local cache
+        localStorage.removeItem(STORAGE_KEY_USER);
+        return null;
       }
     } catch (e) {
       console.warn('Error getting initial Supabase session', e);
+      localStorage.removeItem(STORAGE_KEY_USER);
+      return null;
     }
   }
-  return getCurrentStoredUser();
+  localStorage.removeItem(STORAGE_KEY_USER);
+  return null;
 }
 
 export function getCurrentStoredUser(): UserSession | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_USER);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      if (!parsed.role) {
-        parsed.role = parsed.email === DEFAULT_ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user';
-      }
-      return parsed;
+      return JSON.parse(raw);
     }
   } catch (e) {
     console.error('Error reading current user session', e);

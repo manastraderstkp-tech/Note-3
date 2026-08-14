@@ -28,7 +28,6 @@ import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from './data/initialDa
 import {
   getCurrentStoredUser,
   getInitialSupabaseSession,
-  createInitialAdminSession,
   signOutUser,
   getSupabase,
   getStoredSupabaseConfig,
@@ -84,9 +83,7 @@ export default function App() {
   };
 
   // User Authentication State
-  const [currentUser, setCurrentUser] = useState<UserSession | null>(() => {
-    return getCurrentStoredUser();
-  });
+  const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
 
   // Primary navigation state

@@ -56,7 +56,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Trigger to Automatically Create 'user' Profile on Signup
+-- Trigger to Automatically Create Profile on Signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -65,11 +65,17 @@ BEGIN
         NEW.id,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
-        'user',
+        CASE 
+            WHEN LOWER(NEW.email) = 'manastraderstkp@gmail.com' THEN 'admin'
+            ELSE 'user'
+        END,
         TIMEZONE('utc'::text, NOW()),
         TIMEZONE('utc'::text, NOW())
     )
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT (id) DO UPDATE
+    SET email = EXCLUDED.email,
+        full_name = EXCLUDED.full_name,
+        updated_at = NOW();
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -79,24 +85,27 @@ CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- Designate Admin Account in Database:
+-- Ensure designated admin account is active:
 UPDATE public.profiles
 SET role = 'admin', updated_at = NOW()
 WHERE email = 'manastraderstkp@gmail.com';`,
 
-    rbac: `-- 2. ROLE-BASED ROW LEVEL SECURITY (RLS) POLICIES
+    rbac: `-- 2. UNIFIED ROLE-BASED ROW LEVEL SECURITY (RLS) POLICIES
 -- Standard users: Can ONLY access and mutate rows where user_id = auth.uid()
 -- Admins: Have full system-wide permissions across all rows regardless of user_id
 
 -- PROFILES POLICIES
-CREATE POLICY "Profiles read policy" ON public.profiles FOR SELECT
+CREATE POLICY "Profiles select policy" ON public.profiles FOR SELECT
     USING (auth.uid() = id OR public.is_admin());
+
+CREATE POLICY "Profiles insert policy" ON public.profiles FOR INSERT
+    WITH CHECK (auth.uid() = id OR public.is_admin());
 
 CREATE POLICY "Profiles update policy" ON public.profiles FOR UPDATE
     USING (auth.uid() = id OR public.is_admin())
     WITH CHECK (auth.uid() = id OR public.is_admin());
 
-CREATE POLICY "Profiles admin all policy" ON public.profiles FOR ALL
+CREATE POLICY "Profiles delete policy" ON public.profiles FOR DELETE
     USING (public.is_admin());
 
 -- NOTES POLICIES

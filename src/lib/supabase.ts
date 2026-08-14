@@ -840,12 +840,12 @@ export async function syncDeleteWorkLog(userId: string, logId: string): Promise<
 // -----------------------------------------------------------------------------
 
 export const SUPABASE_SQL_SCHEMA = `-- =========================================================================
--- WORKSPACE PRODUCTIVITY APP - ROLE-BASED ACCESS CONTROL (RBAC) & SUPABASE SCHEMA
--- Roles: 'admin' (Full System Access & Analytics) | 'user' (Personal Space Only)
+-- WORKSPACE PRO - UNIFIED SINGLE SUPABASE BACKEND (RBAC & RLS POLICIES)
+-- Unified Project: Handles both Admin and Standard Users on single database
 -- Run this in your Supabase Project: Dashboard > SQL Editor > New Query
 -- =========================================================================
 
--- 1. Create PROFILES Table for User Roles & Profiles
+-- 1. Create PROFILES Table (Stores role: 'admin' or 'user')
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email TEXT NOT NULL,
@@ -859,6 +859,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 -- 2. Helper Security Definer Function to Check if Current User is Admin
+-- (Using SECURITY DEFINER prevents infinite recursion in RLS policies)
 CREATE OR REPLACE FUNCTION public.is_admin()
 RETURNS BOOLEAN AS $$
 BEGIN
@@ -869,7 +870,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 3. Automatic Trigger to Create a Profile with Role 'user' on New Signup
+-- 3. Automatic Trigger to Create a Profile with Role on Signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -878,11 +879,17 @@ BEGIN
         NEW.id,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
-        'user', -- Default role for all new signups
+        CASE 
+            WHEN LOWER(NEW.email) = 'manastraderstkp@gmail.com' THEN 'admin'
+            ELSE 'user'
+        END,
         TIMEZONE('utc'::text, NOW()),
         TIMEZONE('utc'::text, NOW())
     )
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT (id) DO UPDATE
+    SET email = EXCLUDED.email,
+        full_name = EXCLUDED.full_name,
+        updated_at = NOW();
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -892,13 +899,12 @@ CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 4. Set Specific Account as Admin in Database
--- Modify this email or run this update whenever you want to designate an admin account:
+-- 4. Ensure designated admin role is active
 UPDATE public.profiles
 SET role = 'admin', updated_at = NOW()
 WHERE email = 'manastraderstkp@gmail.com';
 
--- 5. Create NOTES Table
+-- 5. Create NOTES Table (Unified storage for all users)
 CREATE TABLE IF NOT EXISTS public.notes (
     id TEXT PRIMARY KEY,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -914,7 +920,7 @@ CREATE TABLE IF NOT EXISTS public.notes (
     updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- 6. Create TODOS Table
+-- 6. Create TODOS Table (Unified storage for all users)
 CREATE TABLE IF NOT EXISTS public.todos (
     id TEXT PRIMARY KEY,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -929,7 +935,7 @@ CREATE TABLE IF NOT EXISTS public.todos (
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
--- 7. Create WORK_LOGS Table
+-- 7. Create WORK_LOGS Table (Unified storage for all users)
 CREATE TABLE IF NOT EXISTS public.work_logs (
     id TEXT PRIMARY KEY,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -944,9 +950,9 @@ CREATE TABLE IF NOT EXISTS public.work_logs (
 );
 
 -- -------------------------------------------------------------------------
--- ROW LEVEL SECURITY (RLS) POLICIES WITH ROLE-BASED ACCESS CONTROL (RBAC)
--- • Standard Users: Can ONLY Create, View, Update, and Delete rows where user_id = auth.uid()
--- • Admins: Have full system-wide permissions across all rows regardless of user_id
+-- UNIFIED ROW LEVEL SECURITY (RLS) POLICIES
+-- • Standard Users: Can ONLY View, Insert, Update, and Delete rows where user_id = auth.uid()
+-- • Admin Users: Can View, Insert, Update, and Delete ALL rows across the entire database
 -- -------------------------------------------------------------------------
 
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
@@ -954,8 +960,11 @@ ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.work_logs ENABLE ROW LEVEL SECURITY;
 
 -- Clean existing policies
-DROP POLICY IF EXISTS "Profiles read policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles select policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles insert policy" ON public.profiles;
 DROP POLICY IF EXISTS "Profiles update policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles delete policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles read policy" ON public.profiles;
 DROP POLICY IF EXISTS "Profiles admin all policy" ON public.profiles;
 
 DROP POLICY IF EXISTS "Notes select policy" ON public.notes;
@@ -973,24 +982,27 @@ DROP POLICY IF EXISTS "WorkLogs insert policy" ON public.work_logs;
 DROP POLICY IF EXISTS "WorkLogs update policy" ON public.work_logs;
 DROP POLICY IF EXISTS "WorkLogs delete policy" ON public.work_logs;
 
--- PROFILES Policies
--- Users can view their own profile; Admins can view all profiles
-CREATE POLICY "Profiles read policy"
+-- PROFILES POLICIES
+-- Standard users see their own profile; Admins can see all user profiles
+CREATE POLICY "Profiles select policy"
     ON public.profiles FOR SELECT
     USING (auth.uid() = id OR public.is_admin());
 
--- Users can update their own name; Admins can update any profile/role
+CREATE POLICY "Profiles insert policy"
+    ON public.profiles FOR INSERT
+    WITH CHECK (auth.uid() = id OR public.is_admin());
+
+-- Users can update their own name/email; Admins can update any profile or role
 CREATE POLICY "Profiles update policy"
     ON public.profiles FOR UPDATE
     USING (auth.uid() = id OR public.is_admin())
     WITH CHECK (auth.uid() = id OR public.is_admin());
 
--- Admins full management on profiles
-CREATE POLICY "Profiles admin all policy"
-    ON public.profiles FOR ALL
+CREATE POLICY "Profiles delete policy"
+    ON public.profiles FOR DELETE
     USING (public.is_admin());
 
--- NOTES Policies
+-- NOTES POLICIES
 CREATE POLICY "Notes select policy"
     ON public.notes FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
@@ -1008,7 +1020,7 @@ CREATE POLICY "Notes delete policy"
     ON public.notes FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
--- TODOS Policies
+-- TODOS POLICIES
 CREATE POLICY "Todos select policy"
     ON public.todos FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
@@ -1026,7 +1038,7 @@ CREATE POLICY "Todos delete policy"
     ON public.todos FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
--- WORK_LOGS Policies
+-- WORK_LOGS POLICIES
 CREATE POLICY "WorkLogs select policy"
     ON public.work_logs FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
@@ -1044,7 +1056,7 @@ CREATE POLICY "WorkLogs delete policy"
     ON public.work_logs FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
--- Performance & Query Optimization Indexes
+-- 8. Performance Indexes for Query Scaling
 CREATE INDEX IF NOT EXISTS profiles_role_idx ON public.profiles(role);
 CREATE INDEX IF NOT EXISTS notes_user_id_idx ON public.notes(user_id);
 CREATE INDEX IF NOT EXISTS todos_user_id_idx ON public.todos(user_id);

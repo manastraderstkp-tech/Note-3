@@ -4,7 +4,7 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Note, TodoTask, WorkLog, UserSession, UserRole, UserProfile } from '../types';
+import { Note, TodoTask, WorkLog, Folder, UserFile, UserSession, UserRole, UserProfile } from '../types';
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from '../data/initialData';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL, EMAIL_REDIRECT_URL } from './config';
 
@@ -1380,6 +1380,461 @@ export async function syncDeleteWorkLog(userId: string, logId: string): Promise<
 }
 
 // -----------------------------------------------------------------------------
+// FOLDERS & FILES STORAGE SYNC (User Files & Cloud Storage)
+// -----------------------------------------------------------------------------
+
+export const getUserFoldersKey = (userId: string) => `ws_folders_${userId}`;
+export const getUserFilesKey = (userId: string) => `ws_files_${userId}`;
+
+export async function syncFetchFolders(
+  userId: string
+): Promise<{ folders: Folder[]; isCloud: boolean }> {
+  const supabase = getSupabase();
+  const localKey = getUserFoldersKey(userId);
+
+  if (supabase) {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData?.user;
+      const activeUserId = user?.id || userId;
+
+      const { data, error } = await supabase
+        .from('folders')
+        .select('*')
+        .eq('user_id', activeUserId)
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.warn('Supabase folders fetch error:', error.message);
+      } else if (data) {
+        const mappedFolders: Folder[] = data.map((row: any) => ({
+          id: row.id,
+          userId: row.user_id || activeUserId,
+          name: row.name || 'Untitled Folder',
+          parentId: row.parent_id || null,
+          createdAt: row.created_at || new Date().toISOString(),
+          updatedAt: row.updated_at || row.created_at,
+        }));
+
+        try {
+          localStorage.setItem(localKey, JSON.stringify(mappedFolders));
+        } catch (e) {
+          console.warn('Failed to cache folders locally', e);
+        }
+
+        return { folders: mappedFolders, isCloud: true };
+      }
+    } catch (e) {
+      console.warn('Exception during syncFetchFolders, falling back to local:', e);
+    }
+  }
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      return { folders: JSON.parse(raw), isCloud: false };
+    }
+  } catch (e) {
+    console.error('Error parsing local folders', e);
+  }
+
+  return { folders: [], isCloud: false };
+}
+
+export async function syncCreateFolder(
+  userId: string,
+  name: string,
+  parentId?: string | null
+): Promise<{ data: Folder | null; error: string | null }> {
+  const supabase = getSupabase();
+  const localKey = getUserFoldersKey(userId);
+  let activeUserId = userId;
+
+  if (supabase) {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData?.user;
+      if (user?.id) activeUserId = user.id;
+
+      const validParentId = parentId && isValidUUID(parentId) ? parentId : null;
+      const payload = {
+        user_id: activeUserId,
+        name: name.trim() || 'New Folder',
+        parent_id: validParentId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await supabase
+        .from('folders')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Supabase create folder error:', error);
+        return { data: null, error: error.message };
+      }
+
+      if (data) {
+        const newFolder: Folder = {
+          id: data.id,
+          userId: data.user_id || activeUserId,
+          name: data.name,
+          parentId: data.parent_id || null,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+        };
+
+        try {
+          const raw = localStorage.getItem(localKey);
+          const currentList: Folder[] = raw ? JSON.parse(raw) : [];
+          currentList.push(newFolder);
+          localStorage.setItem(localKey, JSON.stringify(currentList));
+        } catch (e) {
+          console.warn('Error caching created folder locally', e);
+        }
+
+        return { data: newFolder, error: null };
+      }
+    } catch (e: any) {
+      console.error('Unexpected error in syncCreateFolder:', e);
+      return { data: null, error: e?.message || 'Error communicating with Supabase' };
+    }
+  }
+
+  // Local fallback
+  const localFolder: Folder = {
+    id: `folder-${Date.now()}`,
+    userId,
+    name: name.trim() || 'New Folder',
+    parentId: parentId || null,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    const currentList: Folder[] = raw ? JSON.parse(raw) : [];
+    currentList.push(localFolder);
+    localStorage.setItem(localKey, JSON.stringify(currentList));
+    return { data: localFolder, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message || 'Failed to save folder locally' };
+  }
+}
+
+export async function syncDeleteFolder(userId: string, folderId: string): Promise<boolean> {
+  const supabase = getSupabase();
+  const localKey = getUserFoldersKey(userId);
+  const localFilesKey = getUserFilesKey(userId);
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const currentList: Folder[] = JSON.parse(raw);
+      localStorage.setItem(localKey, JSON.stringify(currentList.filter((f) => f.id !== folderId)));
+    }
+    // Also clean local files in this folder
+    const rawFiles = localStorage.getItem(localFilesKey);
+    if (rawFiles) {
+      const currentFiles: UserFile[] = JSON.parse(rawFiles);
+      localStorage.setItem(localFilesKey, JSON.stringify(currentFiles.filter((f) => f.folderId !== folderId)));
+    }
+  } catch (e) {
+    console.warn('Error deleting folder from local cache', e);
+  }
+
+  if (supabase) {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const effectiveUserId = authData?.user?.id || userId;
+
+      const { error } = await supabase
+        .from('folders')
+        .delete()
+        .eq('id', folderId)
+        .eq('user_id', effectiveUserId);
+
+      if (error) {
+        console.warn('Supabase delete folder warning:', error.message);
+      }
+    } catch (e) {
+      console.warn('Error deleting folder from Supabase:', e);
+    }
+  }
+  return true;
+}
+
+export async function syncUploadFile(
+  userId: string,
+  folderId: string | null | undefined,
+  file: File
+): Promise<{ data: UserFile | null; error: string | null }> {
+  const supabase = getSupabase();
+  const localKey = getUserFilesKey(userId);
+  let activeUserId = userId;
+
+  if (supabase) {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData?.user;
+      if (user?.id) activeUserId = user.id;
+
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const targetFolder = folderId && isValidUUID(folderId) ? folderId : 'root';
+      const storagePath = `${activeUserId}/${targetFolder}/${Date.now()}_${safeName}`;
+
+      // 1. Upload binary blob to Supabase Storage 'user_files' bucket
+      const { error: uploadError } = await supabase.storage
+        .from('user_files')
+        .upload(storagePath, file, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      let publicUrl = '';
+      if (!uploadError) {
+        const { data: urlData } = supabase.storage
+          .from('user_files')
+          .getPublicUrl(storagePath);
+        publicUrl = urlData?.publicUrl || '';
+      } else {
+        console.warn('Supabase storage upload warning (may need bucket creation):', uploadError.message);
+      }
+
+      // If publicUrl is empty or upload failed, create local object URL as fallback
+      if (!publicUrl) {
+        try {
+          publicUrl = URL.createObjectURL(file);
+        } catch {
+          publicUrl = '';
+        }
+      }
+
+      // 2. Insert File Metadata record into public.files table
+      const validFolderId = folderId && isValidUUID(folderId) ? folderId : null;
+      const filePayload = {
+        user_id: activeUserId,
+        folder_id: validFolderId,
+        name: file.name,
+        file_path: storagePath,
+        file_type: file.type || 'application/octet-stream',
+        file_size: file.size,
+        storage_url: publicUrl,
+        created_at: new Date().toISOString(),
+      };
+
+      const { data, error: dbError } = await supabase
+        .from('files')
+        .insert(filePayload)
+        .select()
+        .single();
+
+      if (dbError) {
+        console.error('Supabase insert file metadata error:', dbError);
+        // If DB insert failed due to missing table or permission, create fallback object
+        const fallbackFile: UserFile = {
+          id: `file-${Date.now()}`,
+          userId: activeUserId,
+          folderId: folderId || null,
+          name: file.name,
+          filePath: storagePath,
+          fileType: file.type || 'application/octet-stream',
+          fileSize: file.size,
+          storageUrl: publicUrl,
+          createdAt: new Date().toISOString(),
+        };
+
+        try {
+          const raw = localStorage.getItem(localKey);
+          const currentList: UserFile[] = raw ? JSON.parse(raw) : [];
+          currentList.unshift(fallbackFile);
+          localStorage.setItem(localKey, JSON.stringify(currentList));
+        } catch (e) {
+          console.warn('Error caching uploaded file locally', e);
+        }
+
+        return { data: fallbackFile, error: null };
+      }
+
+      if (data) {
+        const savedFile: UserFile = {
+          id: data.id,
+          userId: data.user_id || activeUserId,
+          folderId: data.folder_id || null,
+          name: data.name,
+          filePath: data.file_path,
+          fileType: data.file_type || 'application/octet-stream',
+          fileSize: Number(data.file_size || 0),
+          storageUrl: data.storage_url || publicUrl,
+          createdAt: data.created_at,
+        };
+
+        try {
+          const raw = localStorage.getItem(localKey);
+          const currentList: UserFile[] = raw ? JSON.parse(raw) : [];
+          currentList.unshift(savedFile);
+          localStorage.setItem(localKey, JSON.stringify(currentList));
+        } catch (e) {
+          console.warn('Error caching uploaded file locally', e);
+        }
+
+        return { data: savedFile, error: null };
+      }
+    } catch (e: any) {
+      console.error('Unexpected error in syncUploadFile:', e);
+      return { data: null, error: e?.message || 'Error communicating with Supabase' };
+    }
+  }
+
+  // Local fallback for offline/demo mode
+  const localFile: UserFile = {
+    id: `file-${Date.now()}`,
+    userId,
+    folderId: folderId || null,
+    name: file.name,
+    filePath: `local/${file.name}`,
+    fileType: file.type || 'application/octet-stream',
+    fileSize: file.size,
+    storageUrl: URL.createObjectURL(file),
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    const currentList: UserFile[] = raw ? JSON.parse(raw) : [];
+    currentList.unshift(localFile);
+    localStorage.setItem(localKey, JSON.stringify(currentList));
+    return { data: localFile, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message || 'Failed to save file locally' };
+  }
+}
+
+export async function syncFetchFiles(
+  userId: string,
+  folderId?: string | null
+): Promise<{ files: UserFile[]; isCloud: boolean }> {
+  const supabase = getSupabase();
+  const localKey = getUserFilesKey(userId);
+
+  if (supabase) {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData?.user;
+      const activeUserId = user?.id || userId;
+
+      let query = supabase
+        .from('files')
+        .select('*')
+        .eq('user_id', activeUserId)
+        .order('created_at', { ascending: false });
+
+      if (folderId !== undefined) {
+        if (folderId && isValidUUID(folderId)) {
+          query = query.eq('folder_id', folderId);
+        } else if (folderId === null || folderId === '') {
+          query = query.is('folder_id', null);
+        }
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.warn('Supabase files fetch warning:', error.message);
+      } else if (data) {
+        const mappedFiles: UserFile[] = data.map((row: any) => ({
+          id: row.id,
+          userId: row.user_id || activeUserId,
+          folderId: row.folder_id || null,
+          name: row.name || 'Unnamed File',
+          filePath: row.file_path || '',
+          fileType: row.file_type || 'application/octet-stream',
+          fileSize: Number(row.file_size || 0),
+          storageUrl: row.storage_url || '',
+          createdAt: row.created_at || new Date().toISOString(),
+        }));
+
+        try {
+          if (folderId === undefined) {
+            localStorage.setItem(localKey, JSON.stringify(mappedFiles));
+          }
+        } catch (e) {
+          console.warn('Failed to cache files locally', e);
+        }
+
+        return { files: mappedFiles, isCloud: true };
+      }
+    } catch (e) {
+      console.warn('Exception during syncFetchFiles, falling back to local:', e);
+    }
+  }
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const allFiles: UserFile[] = JSON.parse(raw);
+      if (folderId !== undefined) {
+        return {
+          files: allFiles.filter((f) => (folderId ? f.folderId === folderId : !f.folderId)),
+          isCloud: false,
+        };
+      }
+      return { files: allFiles, isCloud: false };
+    }
+  } catch (e) {
+    console.error('Error parsing local files', e);
+  }
+
+  return { files: [], isCloud: false };
+}
+
+export async function syncDeleteFile(
+  userId: string,
+  fileId: string,
+  filePath: string
+): Promise<boolean> {
+  const supabase = getSupabase();
+  const localKey = getUserFilesKey(userId);
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const currentList: UserFile[] = JSON.parse(raw);
+      localStorage.setItem(localKey, JSON.stringify(currentList.filter((f) => f.id !== fileId)));
+    }
+  } catch (e) {
+    console.warn('Error deleting file from local cache', e);
+  }
+
+  if (supabase) {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const effectiveUserId = authData?.user?.id || userId;
+
+      // 1. Remove from Supabase Storage if path exists
+      if (filePath) {
+        await supabase.storage.from('user_files').remove([filePath]);
+      }
+
+      // 2. Remove row from database
+      const { error } = await supabase
+        .from('files')
+        .delete()
+        .eq('id', fileId)
+        .eq('user_id', effectiveUserId);
+
+      if (error) {
+        console.warn('Supabase delete file warning:', error.message);
+      }
+    } catch (e) {
+      console.warn('Error deleting file from Supabase:', e);
+    }
+  }
+  return true;
+}
+
+// -----------------------------------------------------------------------------
 // Clean SQL Schema & RLS Policies (For easy copy & execute in Supabase SQL editor)
 // -----------------------------------------------------------------------------
 
@@ -1497,6 +1952,34 @@ CREATE TABLE IF NOT EXISTS public.work_logs (
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
+-- 8. Create FOLDERS Table
+CREATE TABLE IF NOT EXISTS public.folders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    name TEXT NOT NULL,
+    parent_id UUID REFERENCES public.folders(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+-- 9. Create FILES Table
+CREATE TABLE IF NOT EXISTS public.files (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    folder_id UUID REFERENCES public.folders(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_type TEXT NOT NULL,
+    file_size BIGINT NOT NULL DEFAULT 0,
+    storage_url TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+-- 10. Storage Bucket Setup ('user_files')
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('user_files', 'user_files', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
 -- -------------------------------------------------------------------------
 -- UNIFIED ROW LEVEL SECURITY (RLS) POLICIES
 -- • Standard Users: Can ONLY View, Insert, Update, and Delete rows where user_id = auth.uid()
@@ -1506,6 +1989,8 @@ CREATE TABLE IF NOT EXISTS public.work_logs (
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.work_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
 
 -- Clean existing policies
 DROP POLICY IF EXISTS "Profiles select policy" ON public.profiles;
@@ -1529,6 +2014,16 @@ DROP POLICY IF EXISTS "WorkLogs select policy" ON public.work_logs;
 DROP POLICY IF EXISTS "WorkLogs insert policy" ON public.work_logs;
 DROP POLICY IF EXISTS "WorkLogs update policy" ON public.work_logs;
 DROP POLICY IF EXISTS "WorkLogs delete policy" ON public.work_logs;
+
+DROP POLICY IF EXISTS "Folders select policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders insert policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders update policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders delete policy" ON public.folders;
+
+DROP POLICY IF EXISTS "Files select policy" ON public.files;
+DROP POLICY IF EXISTS "Files insert policy" ON public.files;
+DROP POLICY IF EXISTS "Files update policy" ON public.files;
+DROP POLICY IF EXISTS "Files delete policy" ON public.files;
 
 -- PROFILES POLICIES
 -- Standard users see their own profile; Admins can see all user profiles
@@ -1604,9 +2099,49 @@ CREATE POLICY "WorkLogs delete policy"
     ON public.work_logs FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
--- 8. Performance Indexes for Query Scaling
+-- FOLDERS POLICIES
+CREATE POLICY "Folders select policy"
+    ON public.folders FOR SELECT
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Folders insert policy"
+    ON public.folders FOR INSERT
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Folders update policy"
+    ON public.folders FOR UPDATE
+    USING (auth.uid() = user_id OR public.is_admin())
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Folders delete policy"
+    ON public.folders FOR DELETE
+    USING (auth.uid() = user_id OR public.is_admin());
+
+-- FILES POLICIES
+CREATE POLICY "Files select policy"
+    ON public.files FOR SELECT
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Files insert policy"
+    ON public.files FOR INSERT
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Files update policy"
+    ON public.files FOR UPDATE
+    USING (auth.uid() = user_id OR public.is_admin())
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Files delete policy"
+    ON public.files FOR DELETE
+    USING (auth.uid() = user_id OR public.is_admin());
+
+-- 11. Performance Indexes for Query Scaling
 CREATE INDEX IF NOT EXISTS profiles_role_idx ON public.profiles(role);
 CREATE INDEX IF NOT EXISTS notes_user_id_idx ON public.notes(user_id);
 CREATE INDEX IF NOT EXISTS todos_user_id_idx ON public.todos(user_id);
 CREATE INDEX IF NOT EXISTS work_logs_user_id_idx ON public.work_logs(user_id);
+CREATE INDEX IF NOT EXISTS folders_user_id_idx ON public.folders(user_id);
+CREATE INDEX IF NOT EXISTS folders_parent_id_idx ON public.folders(parent_id);
+CREATE INDEX IF NOT EXISTS files_user_id_idx ON public.files(user_id);
+CREATE INDEX IF NOT EXISTS files_folder_id_idx ON public.files(folder_id);
 `;

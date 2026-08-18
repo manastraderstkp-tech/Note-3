@@ -14,6 +14,15 @@ export {
   syncFetchWorkLogs,
   syncSaveWorkLog,
   syncDeleteWorkLog,
+  syncFetchFolders,
+  syncCreateFolder,
+  syncDeleteFolder,
+  syncUploadFile,
+  syncFetchFiles,
+  syncDeleteFile,
+  getUserFoldersKey,
+  getUserFilesKey,
   fetchNotes,
   fetchTodos,
 } from './supabase';
+

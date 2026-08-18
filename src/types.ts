@@ -1,4 +1,4 @@
-export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs';
+export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files';
 
 export type UserRole = 'admin' | 'user';
 
@@ -89,6 +89,27 @@ export interface WorkLog {
   createdAt: string;
 }
 
+export interface Folder {
+  id: string;
+  userId: string;
+  name: string;
+  parentId?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface UserFile {
+  id: string;
+  userId: string;
+  folderId?: string | null;
+  name: string;
+  filePath: string;
+  fileType: string;
+  fileSize: number; // in bytes
+  storageUrl: string;
+  createdAt: string;
+}
+
 export interface MetricStats {
   totalNotes: number;
   pendingTasks: number;
@@ -96,4 +117,7 @@ export interface MetricStats {
   completedTasks: number;
   hoursLoggedToday: number;
   totalHoursWeek: number;
+  totalFolders?: number;
+  totalFiles?: number;
 }
+

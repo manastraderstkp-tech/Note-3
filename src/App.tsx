@@ -21,8 +21,9 @@ import { DeployGuideModal } from './components/DeployGuideModal';
 import { ExportModal } from './components/ExportModal';
 import { UserRoleManagementModal } from './components/UserRoleManagementModal';
 import { PersonalSpaceView } from './components/PersonalSpaceView';
+import { FileManager } from './components/FileManager';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
-import { Note, TodoTask, WorkLog, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole } from './types';
+import { Note, TodoTask, WorkLog, Folder, UserFile, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole } from './types';
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from './data/initialData';
 import {
   getCurrentStoredUser,
@@ -40,6 +41,12 @@ import {
   syncFetchWorkLogs,
   syncSaveWorkLog,
   syncDeleteWorkLog,
+  syncFetchFolders,
+  syncCreateFolder,
+  syncDeleteFolder,
+  syncUploadFile,
+  syncFetchFiles,
+  syncDeleteFile,
 } from './lib/supabase';
 import {
   playAlertSound,
@@ -114,6 +121,8 @@ export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [tasks, setTasks] = useState<TodoTask[]>([]);
   const [worklogs, setWorklogs] = useState<WorkLog[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [files, setFiles] = useState<UserFile[]>([]);
 
   // Active Reminder In-App Toasts
   const [activeAlerts, setActiveAlerts] = useState<ActiveReminderAlert[]>([]);
@@ -224,17 +233,21 @@ export default function App() {
   const loadUserData = useCallback(async (user: UserSession) => {
     setIsSyncing(true);
     try {
-      const [notesRes, todosRes, logsRes] = await Promise.all([
+      const [notesRes, todosRes, logsRes, foldersRes, filesRes] = await Promise.all([
         syncFetchNotes(user.id),
         syncFetchTodos(user.id),
         syncFetchWorkLogs(user.id),
+        syncFetchFolders(user.id),
+        syncFetchFiles(user.id),
       ]);
 
       setNotes(notesRes.notes);
       setTasks(todosRes.todos);
       setWorklogs(logsRes.worklogs);
+      setFolders(foldersRes.folders);
+      setFiles(filesRes.files);
 
-      if (notesRes.isCloud || todosRes.isCloud || logsRes.isCloud) {
+      if (notesRes.isCloud || todosRes.isCloud || logsRes.isCloud || foldersRes.isCloud || filesRes.isCloud) {
         setSyncStatusText('Cloud Connected • Supabase Live Sync');
       } else {
         setSyncStatusText('User-Isolated Local Space');
@@ -253,6 +266,8 @@ export default function App() {
       setNotes([]);
       setTasks([]);
       setWorklogs([]);
+      setFolders([]);
+      setFiles([]);
     }
   }, [currentUser, loadUserData]);
 
@@ -672,6 +687,62 @@ export default function App() {
     setIsWorkLogModalOpen(true);
   };
 
+  // Folder & File CRUD Operations with Supabase Sync
+  const handleCreateFolder = async (
+    name: string,
+    parentId?: string | null
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) {
+      showToast('You must be signed in to create folders.', 'error');
+      return { success: false, error: 'User session not found' };
+    }
+
+    const res = await syncCreateFolder(currentUser.id, name, parentId);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    if (res.data) {
+      setFolders((prev) => [...prev, res.data!]);
+    }
+    return { success: true };
+  };
+
+  const handleDeleteFolder = async (folderId: string) => {
+    if (!currentUser) return;
+    setFolders((prev) => prev.filter((f) => f.id !== folderId));
+    setFiles((prev) => prev.filter((f) => f.folderId !== folderId));
+    await syncDeleteFolder(currentUser.id, folderId);
+    showToast('Folder deleted', 'info');
+  };
+
+  const handleUploadFile = async (
+    folderId: string | null,
+    file: File
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) {
+      showToast('You must be signed in to upload files.', 'error');
+      return { success: false, error: 'User session not found' };
+    }
+
+    const res = await syncUploadFile(currentUser.id, folderId, file);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    if (res.data) {
+      setFiles((prev) => [res.data!, ...prev]);
+    }
+    return { success: true };
+  };
+
+  const handleDeleteFile = async (fileId: string, filePath: string) => {
+    if (!currentUser) return;
+    setFiles((prev) => prev.filter((f) => f.id !== fileId));
+    await syncDeleteFile(currentUser.id, fileId, filePath);
+    showToast('File deleted', 'info');
+  };
+
   // Reset sample data
   const handleResetData = async () => {
     if (!currentUser) return;
@@ -891,6 +962,19 @@ export default function App() {
                 searchQuery={searchQuery}
                 selectedCategory={selectedCategory}
                 onOpenExportModal={handleOpenExportModal}
+              />
+            )}
+
+            {activeSection === 'files' && (
+              <FileManager
+                folders={folders}
+                files={files}
+                onCreateFolder={handleCreateFolder}
+                onDeleteFolder={handleDeleteFolder}
+                onUploadFile={handleUploadFile}
+                onDeleteFile={handleDeleteFile}
+                onShowToast={showToast}
+                searchQuery={searchQuery}
               />
             )}
           </div>

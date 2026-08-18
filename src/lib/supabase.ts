@@ -4,19 +4,16 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Note, TodoTask, WorkLog, Folder, UserFile, UserSession, UserRole, UserProfile } from '../types';
-import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from '../data/initialData';
+import { Note, TodoTask, UserSession, UserRole, UserProfile } from '../types';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL, EMAIL_REDIRECT_URL } from './config';
 
 export { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL, EMAIL_REDIRECT_URL };
 
-// Storage keys for custom client config and session
 const STORAGE_KEY_URL = 'workspace_supabase_url';
 const STORAGE_KEY_KEY = 'workspace_supabase_anon_key';
 const STORAGE_KEY_USER = 'workspace_current_user';
 const STORAGE_KEY_PROFILES = 'workspace_profiles_list';
 
-// Dynamic & Stored Supabase Config reader
 export function getStoredSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
   let url = SUPABASE_URL;
   let anonKey = SUPABASE_ANON_KEY;
@@ -36,7 +33,7 @@ export function getStoredSupabaseConfig(): { url: string; anonKey: string; isCon
       localStorage.removeItem(STORAGE_KEY_KEY);
     }
   } catch {
-    // Ignore localStorage access issues in iframe/strict modes
+    // Ignore localStorage errors
   }
 
   const isConfigured = Boolean(
@@ -51,7 +48,6 @@ export function getStoredSupabaseConfig(): { url: string; anonKey: string; isCon
   return { url, anonKey, isConfigured };
 }
 
-// Check if valid live Supabase credentials are configured
 export function isSupabaseConfigured(): boolean {
   return getStoredSupabaseConfig().isConfigured;
 }
@@ -75,7 +71,6 @@ export function getSupabase(): SupabaseClient {
   return activeClient;
 }
 
-// Direct centralized Supabase client instance
 export const supabase: SupabaseClient = getSupabase();
 
 export function saveSupabaseConfig(url: string, anonKey: string): void {
@@ -100,7 +95,6 @@ export function clearSupabaseConfig(): void {
   activeConfigString = '';
 }
 
-// Helper to format friendly connection errors
 function formatSupabaseAuthError(err: unknown, defaultMsg: string): string {
   const rawMsg = err instanceof Error ? err.message : String(err || defaultMsg);
   const lower = rawMsg.toLowerCase();
@@ -112,14 +106,14 @@ function formatSupabaseAuthError(err: unknown, defaultMsg: string): string {
     lower.includes('err_name_not_resolved') ||
     lower.includes('load failed')
   ) {
-    return 'Unable to connect to Supabase backend. Please verify your Supabase URL and Anon Key in config.ts or click "Setup Supabase".';
+    return 'Unable to connect to Supabase backend. Please verify your Supabase URL and Anon Key.';
   }
 
   return rawMsg;
 }
 
 // -----------------------------------------------------------------------------
-// Profiles & RBAC Operations (Role Check on Login)
+// Profiles Operations
 // -----------------------------------------------------------------------------
 
 export async function fetchUserProfile(
@@ -127,12 +121,12 @@ export async function fetchUserProfile(
   email?: string,
   fullName?: string
 ): Promise<{ role: UserRole; profile: UserProfile | null }> {
-  const supabase = getSupabase();
+  const client = getSupabase();
   const trimmedEmail = (email || '').trim().toLowerCase();
 
-  if (supabase) {
+  if (client) {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from('profiles')
         .select('*')
         .eq('id', userId)
@@ -161,7 +155,7 @@ export async function fetchUserProfile(
         createdAt: new Date().toISOString(),
       };
 
-      await supabase.from('profiles').upsert(
+      await client.from('profiles').upsert(
         {
           id: userId,
           email: trimmedEmail,
@@ -200,11 +194,11 @@ export async function fetchUserProfile(
 }
 
 export async function fetchAllProfiles(): Promise<UserProfile[]> {
-  const supabase = getSupabase();
+  const client = getSupabase();
 
-  if (supabase) {
+  if (client) {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from('profiles')
         .select('*')
         .order('created_at', { ascending: false });
@@ -222,7 +216,7 @@ export async function fetchAllProfiles(): Promise<UserProfile[]> {
         return mapped;
       }
     } catch (e) {
-      console.warn('Error fetching all profiles from Supabase:', e);
+      console.warn('Error fetching all profiles:', e);
     }
   }
 
@@ -230,17 +224,16 @@ export async function fetchAllProfiles(): Promise<UserProfile[]> {
 }
 
 export async function updateUserRoleInDb(userId: string, newRole: UserRole): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabase();
+  const client = getSupabase();
 
-  if (supabase) {
+  if (client) {
     try {
-      const { error } = await supabase
+      const { error } = await client
         .from('profiles')
         .update({ role: newRole, updated_at: new Date().toISOString() })
         .eq('id', userId);
 
       if (error) {
-        console.warn('Supabase update user role error:', error.message);
         return { success: false, error: error.message };
       }
     } catch (err: any) {
@@ -268,9 +261,7 @@ export async function updateUserRoleInDb(userId: string, newRole: UserRole): Pro
 function getLocalProfiles(): UserProfile[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_PROFILES);
-    if (raw) {
-      return JSON.parse(raw);
-    }
+    if (raw) return JSON.parse(raw);
   } catch (e) {
     console.error('Error reading local profiles', e);
   }
@@ -304,19 +295,18 @@ function saveLocalProfile(profile: UserProfile) {
 }
 
 // -----------------------------------------------------------------------------
-// Authentication Operations (Strict Supabase Auth with RLS & Google OAuth)
+// Authentication Operations
 // -----------------------------------------------------------------------------
 
-// *** Google OAuth Sign-In Function ***
 export async function signInWithGoogle(): Promise<{ data: any; error: string | null }> {
-  const supabase = getSupabase();
-  if (!supabase) {
+  const client = getSupabase();
+  if (!client) {
     return { data: null, error: 'Supabase client is not available.' };
   }
 
   try {
     const redirectUrl = typeof window !== 'undefined' ? window.location.origin : EMAIL_REDIRECT_URL;
-    const { data, error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await client.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: redirectUrl,
@@ -342,18 +332,15 @@ export async function signUpUser(
   password: string,
   fullName?: string
 ): Promise<{ user: UserSession | null; error: string | null; needsVerification?: boolean }> {
-  const supabase = getSupabase();
+  const client = getSupabase();
   const trimmedEmail = email.trim().toLowerCase();
 
-  if (!supabase) {
-    return {
-      user: null,
-      error: 'Supabase client is not available.',
-    };
+  if (!client) {
+    return { user: null, error: 'Supabase client is not available.' };
   }
 
   try {
-    const { data, error } = await supabase.auth.signUp({
+    const { data, error } = await client.auth.signUp({
       email: trimmedEmail,
       password,
       options: {
@@ -366,36 +353,21 @@ export async function signUpUser(
 
     if (error) {
       if (error.message.toLowerCase().includes('already registered')) {
-        return {
-          user: null,
-          error: 'This email is already registered. Please switch to the Sign In tab to log in.',
-        };
+        return { user: null, error: 'This email is already registered. Please sign in.' };
       }
       return { user: null, error: error.message };
     }
 
     if (!data.user) {
-      return { user: null, error: 'Failed to create user account in Supabase.' };
+      return { user: null, error: 'Failed to create user account.' };
     }
 
-    if (data.user.identities && data.user.identities.length === 0) {
-      return {
-        user: null,
-        error: 'An account with this email address already exists. Please sign in instead.',
-      };
-    }
-
-    await supabase.auth.signOut();
+    await client.auth.signOut();
     localStorage.removeItem(STORAGE_KEY_USER);
 
-    return {
-      user: null,
-      error: null,
-      needsVerification: true,
-    };
+    return { user: null, error: null, needsVerification: true };
   } catch (err: unknown) {
-    const errorMessage = formatSupabaseAuthError(err, 'Error communicating with Supabase auth');
-    return { user: null, error: errorMessage };
+    return { user: null, error: formatSupabaseAuthError(err, 'Error communicating with Supabase auth') };
   }
 }
 
@@ -403,74 +375,31 @@ export async function signInUser(
   email: string,
   password: string
 ): Promise<{ user: UserSession | null; error: string | null; unverified?: boolean }> {
-  const supabase = getSupabase();
+  const client = getSupabase();
   const trimmedEmail = email.trim().toLowerCase();
 
-  if (!supabase) {
-    return {
-      user: null,
-      error: 'Supabase client is not available.',
-    };
+  if (!client) {
+    return { user: null, error: 'Supabase client is not available.' };
   }
 
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await client.auth.signInWithPassword({
       email: trimmedEmail,
       password,
     });
 
     if (error) {
-      if (
-        error.message.toLowerCase().includes('invalid login credentials') ||
-        error.message.toLowerCase().includes('invalid credentials')
-      ) {
-        return {
-          user: null,
-          error: 'Invalid email or password. Please verify your credentials or sign up first.',
-        };
-      }
-      if (error.message.toLowerCase().includes('email not confirmed') || error.message.toLowerCase().includes('not verified')) {
-        await supabase.auth.signOut();
-        localStorage.removeItem(STORAGE_KEY_USER);
-        return {
-          user: null,
-          error: 'Your email is not verified yet. Please check your inbox and confirm your email first.',
-          unverified: true,
-        };
+      if (error.message.toLowerCase().includes('invalid login credentials')) {
+        return { user: null, error: 'Invalid email or password.' };
       }
       return { user: null, error: formatSupabaseAuthError(error, error.message) };
     }
 
     if (!data.user) {
-      return {
-        user: null,
-        error: 'Authentication failed: No user account found.',
-      };
+      return { user: null, error: 'Authentication failed.' };
     }
 
-    const isEmailConfirmed = Boolean(data.user.email_confirmed_at || (data.user as unknown as { confirmed_at?: string }).confirmed_at);
-    if (!isEmailConfirmed) {
-      await supabase.auth.signOut();
-      localStorage.removeItem(STORAGE_KEY_USER);
-      return {
-        user: null,
-        error: 'Your email is not verified yet. Please check your inbox and confirm your email first.',
-        unverified: true,
-      };
-    }
-
-    if (!data.session) {
-      return {
-        user: null,
-        error: 'Authentication failed: No active session returned from Supabase. Please try again.',
-      };
-    }
-
-    const { role } = await fetchUserProfile(
-      data.user.id,
-      trimmedEmail,
-      data.user.user_metadata?.full_name
-    );
+    const { role } = await fetchUserProfile(data.user.id, trimmedEmail, data.user.user_metadata?.full_name);
 
     const sessionUser: UserSession = {
       id: data.user.id,
@@ -483,71 +412,28 @@ export async function signInUser(
     storeLocalUser(sessionUser);
     return { user: sessionUser, error: null };
   } catch (err: unknown) {
-    const errorMessage = formatSupabaseAuthError(err, 'Error logging into Supabase');
-    return { user: null, error: errorMessage };
-  }
-}
-
-export async function resendVerificationEmail(email: string): Promise<{ success: boolean; error: string | null }> {
-  const supabase = getSupabase();
-  const trimmedEmail = email.trim().toLowerCase();
-
-  if (!supabase) {
-    return { success: false, error: 'Supabase client is not available.' };
-  }
-
-  try {
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email: trimmedEmail,
-      options: {
-        emailRedirectTo: EMAIL_REDIRECT_URL,
-      },
-    });
-
-    if (error) {
-      return { success: false, error: formatSupabaseAuthError(error, error.message) };
-    }
-    return { success: true, error: null };
-  } catch (err: unknown) {
-    const msg = formatSupabaseAuthError(err, 'Failed to resend confirmation email.');
-    return { success: false, error: msg };
+    return { user: null, error: formatSupabaseAuthError(err, 'Error logging into Supabase') };
   }
 }
 
 export async function signOutUser(): Promise<void> {
-  const supabase = getSupabase();
-  if (supabase) {
+  const client = getSupabase();
+  if (client) {
     try {
-      await supabase.auth.signOut();
+      await client.auth.signOut();
     } catch (e) {
-      console.warn('Error signing out from Supabase', e);
+      console.warn('Error signing out:', e);
     }
   }
-  try {
-    localStorage.removeItem(STORAGE_KEY_USER);
-  } catch (e) {
-    console.error('Error clearing local user session', e);
-  }
+  localStorage.removeItem(STORAGE_KEY_USER);
 }
 
 export async function getInitialSupabaseSession(): Promise<UserSession | null> {
-  const supabase = getSupabase();
-  if (supabase) {
+  const client = getSupabase();
+  if (client) {
     try {
-      const hash = typeof window !== 'undefined' ? window.location.hash : '';
-      const search = typeof window !== 'undefined' ? window.location.search : '';
-
-      const { data: { user }, error } = await supabase.auth.getUser();
+      const { data: { user }, error } = await client.auth.getUser();
       if (!error && user) {
-        const isEmailConfirmed = Boolean(user.email_confirmed_at || (user as unknown as { confirmed_at?: string }).confirmed_at);
-        if (!isEmailConfirmed) {
-          console.warn('User email is not confirmed yet. Signing out...');
-          await supabase.auth.signOut();
-          localStorage.removeItem(STORAGE_KEY_USER);
-          return null;
-        }
-
         const userEmail = user.email || '';
         const fullName = user.user_metadata?.full_name || userEmail.split('@')[0];
         const { role } = await fetchUserProfile(user.id, userEmail, fullName);
@@ -560,20 +446,10 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
           createdAt: user.created_at,
         };
         storeLocalUser(sessionUser);
-
-        if (typeof window !== 'undefined' && (hash.includes('access_token=') || search.includes('code='))) {
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }
-
         return sessionUser;
-      } else {
-        localStorage.removeItem(STORAGE_KEY_USER);
-        return null;
       }
     } catch (e) {
-      console.warn('Error getting initial Supabase session', e);
-      localStorage.removeItem(STORAGE_KEY_USER);
-      return null;
+      console.warn('Error getting initial session:', e);
     }
   }
   localStorage.removeItem(STORAGE_KEY_USER);
@@ -583,11 +459,9 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
 export function getCurrentStoredUser(): UserSession | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_USER);
-    if (raw) {
-      return JSON.parse(raw);
-    }
+    if (raw) return JSON.parse(raw);
   } catch (e) {
-    console.error('Error reading current user session', e);
+    console.error('Error reading session', e);
   }
   return null;
 }
@@ -595,15 +469,6 @@ export function getCurrentStoredUser(): UserSession | null {
 export function storeLocalUser(user: UserSession) {
   try {
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
-    const users = getLocalRegisteredUsers();
-    const existingIndex = users.findIndex((u) => u.id === user.id || u.email === user.email);
-    if (existingIndex !== -1) {
-      users[existingIndex] = user;
-    } else {
-      users.push(user);
-    }
-    localStorage.setItem('workspace_registered_users', JSON.stringify(users));
-
     saveLocalProfile({
       id: user.id,
       email: user.email,
@@ -616,59 +481,25 @@ export function storeLocalUser(user: UserSession) {
   }
 }
 
-export function getLocalRegisteredUsers(): UserSession[] {
-  try {
-    const raw = localStorage.getItem('workspace_registered_users');
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function createInitialAdminSession(
-  email = DEFAULT_ADMIN_EMAIL,
-  name = 'Manas Traders (Admin)'
-): UserSession {
-  const adminUser: UserSession = {
-    id: `usr_${email.replace(/[^a-zA-Z0-9]/g, '_')}`,
-    email: email.toLowerCase(),
-    fullName: name,
-    role: 'admin',
-    isDemo: false,
-    createdAt: '2026-08-01T10:00:00Z',
-  };
-  storeLocalUser(adminUser);
-  return adminUser;
-}
-
 // -----------------------------------------------------------------------------
-// Database Data Mapping & Synchronisation (User-Isolated)
+// Database Sync Operations
 // -----------------------------------------------------------------------------
-
-const getUserNotesKey = (userId: string) => `ws_notes_${userId}`;
-const getUserTodosKey = (userId: string) => `ws_todos_${userId}`;
-const getUserWorkLogsKey = (userId: string) => `ws_worklogs_${userId}`;
 
 export function isValidUUID(str: string | undefined | null): boolean {
   if (!str || typeof str !== 'string') return false;
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(str);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
 }
 
-// 1. NOTES DATA OPERATIONS
 export async function syncFetchNotes(userId: string): Promise<{ notes: Note[]; isCloud: boolean }> {
-  const supabase = getSupabase();
-  const localKey = getUserNotesKey(userId);
+  const client = getSupabase();
+  const localKey = `ws_notes_${userId}`;
 
-  if (supabase) {
+  if (client) {
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const effectiveUserId = authData?.user?.id || userId;
-
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from('notes')
         .select('*')
-        .eq('user_id', effectiveUserId)
+        .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (!error && data) {
@@ -676,35 +507,29 @@ export async function syncFetchNotes(userId: string): Promise<{ notes: Note[]; i
           id: item.id || `note-${Date.now()}`,
           title: item.title || '',
           content: item.content || '',
-          tags: Array.isArray(item.tags)
-            ? item.tags
-            : typeof item.tags === 'string'
-            ? JSON.parse(item.tags || '[]')
-            : [],
+          tags: Array.isArray(item.tags) ? item.tags : [],
           category: item.category || 'General',
           colorScheme: item.color_scheme || 'default',
           isPinned: Boolean(item.is_pinned),
           notifyAt: item.notify_at || undefined,
           notified: Boolean(item.notified),
           createdAt: item.created_at || new Date().toISOString(),
-          updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+          updatedAt: item.updated_at || new Date().toISOString(),
         }));
 
         localStorage.setItem(localKey, JSON.stringify(mappedNotes));
         return { notes: mappedNotes, isCloud: true };
       }
     } catch (err) {
-      console.warn('Error fetching notes from Supabase:', err);
+      console.warn('Error fetching notes:', err);
     }
   }
 
   try {
     const raw = localStorage.getItem(localKey);
-    if (raw) {
-      return { notes: JSON.parse(raw), isCloud: false };
-    }
+    if (raw) return { notes: JSON.parse(raw), isCloud: false };
   } catch (e) {
-    console.error('Error parsing local notes', e);
+    console.error('Error parsing notes', e);
   }
 
   return { notes: [], isCloud: false };
@@ -714,24 +539,17 @@ export async function syncSaveNote(
   userId: string,
   note: Note
 ): Promise<{ data: Note | null; error: string | null }> {
-  const supabase = getSupabase();
-  const localKey = getUserNotesKey(userId);
-  let activeUserId = userId;
+  const client = getSupabase();
 
-  if (supabase) {
+  if (client) {
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData?.user?.id) activeUserId = authData.user.id;
-
       const hasValidUuid = isValidUUID(note.id);
-
       const payload: Record<string, any> = {
-        user_id: activeUserId,
+        user_id: userId,
         title: note.title,
         content: note.content || '',
         tags: Array.isArray(note.tags) ? note.tags : [],
         is_pinned: Boolean(note.isPinned),
-        color: note.colorScheme || 'default',
         color_scheme: note.colorScheme || 'default',
         category: note.category || 'General',
         notify_at: note.notifyAt || null,
@@ -742,35 +560,27 @@ export async function syncSaveNote(
 
       if (hasValidUuid) payload.id = note.id;
 
-      let data: any = null;
-      let error: any = null;
+      const res = hasValidUuid
+        ? await client.from('notes').upsert(payload, { onConflict: 'id' }).select().single()
+        : await client.from('notes').insert(payload).select().single();
 
-      if (hasValidUuid) {
-        const res = await supabase.from('notes').upsert(payload, { onConflict: 'id' }).select().single();
-        data = res.data;
-        error = res.error;
-      } else {
-        const res = await supabase.from('notes').insert(payload).select().single();
-        data = res.data;
-        error = res.error;
-      }
-
-      if (!error && data) {
-        const savedNote: Note = {
-          id: data.id,
-          title: data.title || '',
-          content: data.content || '',
-          tags: Array.isArray(data.tags) ? data.tags : [],
-          category: data.category || 'General',
-          colorScheme: data.color_scheme || 'default',
-          isPinned: Boolean(data.is_pinned),
-          notifyAt: data.notify_at || undefined,
-          notified: Boolean(data.notified),
-          createdAt: data.created_at || note.createdAt,
-          updatedAt: data.updated_at || note.updatedAt,
+      if (!res.error && res.data) {
+        return {
+          data: {
+            id: res.data.id,
+            title: res.data.title || '',
+            content: res.data.content || '',
+            tags: Array.isArray(res.data.tags) ? res.data.tags : [],
+            category: res.data.category || 'General',
+            colorScheme: res.data.color_scheme || 'default',
+            isPinned: Boolean(res.data.is_pinned),
+            notifyAt: res.data.notify_at || undefined,
+            notified: Boolean(res.data.notified),
+            createdAt: res.data.created_at || note.createdAt,
+            updatedAt: res.data.updated_at || note.updatedAt,
+          },
+          error: null,
         };
-
-        return { data: savedNote, error: null };
       }
     } catch (e: any) {
       console.error('Error saving note:', e);
@@ -781,12 +591,10 @@ export async function syncSaveNote(
 }
 
 export async function syncDeleteNote(userId: string, noteId: string): Promise<boolean> {
-  const supabase = getSupabase();
-  if (supabase) {
+  const client = getSupabase();
+  if (client) {
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const effectiveUserId = authData?.user?.id || userId;
-      await supabase.from('notes').delete().eq('id', noteId).eq('user_id', effectiveUserId);
+      await client.from('notes').delete().eq('id', noteId).eq('user_id', userId);
     } catch (e) {
       console.warn('Error deleting note:', e);
     }
@@ -794,20 +602,16 @@ export async function syncDeleteNote(userId: string, noteId: string): Promise<bo
   return true;
 }
 
-// 2. TODOS DATA OPERATIONS
 export async function syncFetchTodos(userId: string): Promise<{ todos: TodoTask[]; isCloud: boolean }> {
-  const supabase = getSupabase();
-  const localKey = getUserTodosKey(userId);
+  const client = getSupabase();
+  const localKey = `ws_todos_${userId}`;
 
-  if (supabase) {
+  if (client) {
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const effectiveUserId = authData?.user?.id || userId;
-
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from('todos')
         .select('*')
-        .eq('user_id', effectiveUserId)
+        .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (!error && data) {
@@ -817,9 +621,7 @@ export async function syncFetchTodos(userId: string): Promise<{ todos: TodoTask[
           description: item.description || '',
           status: item.status || 'pending',
           priority: item.priority || 'medium',
-          dueDate: item.due_time || item.due_date || new Date().toISOString().split('T')[0],
-          notifyAt: item.notify_at || undefined,
-          notified: Boolean(item.notified),
+          dueDate: item.due_date || new Date().toISOString().split('T')[0],
           category: item.category || 'General',
           createdAt: item.created_at || new Date().toISOString(),
         }));
@@ -828,7 +630,7 @@ export async function syncFetchTodos(userId: string): Promise<{ todos: TodoTask[
         return { todos: mappedTodos, isCloud: true };
       }
     } catch (err) {
-      console.warn('Error fetching todos from Supabase:', err);
+      console.warn('Error fetching todos:', err);
     }
   }
 
@@ -836,7 +638,7 @@ export async function syncFetchTodos(userId: string): Promise<{ todos: TodoTask[
     const raw = localStorage.getItem(localKey);
     if (raw) return { todos: JSON.parse(raw), isCloud: false };
   } catch (e) {
-    console.error('Error reading local todos', e);
+    console.error('Error reading todos', e);
   }
 
   return { todos: [], isCloud: false };
@@ -846,57 +648,42 @@ export async function syncSaveTodo(
   userId: string,
   todo: TodoTask
 ): Promise<{ data: TodoTask | null; error: string | null }> {
-  const supabase = getSupabase();
-  let activeUserId = userId;
+  const client = getSupabase();
 
-  if (supabase) {
+  if (client) {
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData?.user?.id) activeUserId = authData.user.id;
-
       const hasValidUuid = isValidUUID(todo.id);
-
       const payload: Record<string, any> = {
-        user_id: activeUserId,
+        user_id: userId,
         task_name: todo.title,
-        title: todo.title,
         description: todo.description || '',
         status: todo.status || 'pending',
         priority: todo.priority || 'medium',
         due_date: todo.dueDate || null,
-        due_time: todo.dueDate || null,
         category: todo.category || 'General',
         created_at: todo.createdAt || new Date().toISOString(),
       };
 
       if (hasValidUuid) payload.id = todo.id;
 
-      let data: any = null;
-      let error: any = null;
+      const res = hasValidUuid
+        ? await client.from('todos').upsert(payload, { onConflict: 'id' }).select().single()
+        : await client.from('todos').insert(payload).select().single();
 
-      if (hasValidUuid) {
-        const res = await supabase.from('todos').upsert(payload, { onConflict: 'id' }).select().single();
-        data = res.data;
-        error = res.error;
-      } else {
-        const res = await supabase.from('todos').insert(payload).select().single();
-        data = res.data;
-        error = res.error;
-      }
-
-      if (!error && data) {
-        const savedTodo: TodoTask = {
-          id: data.id,
-          title: data.task_name || data.title || '',
-          description: data.description || '',
-          status: data.status || 'pending',
-          priority: data.priority || 'medium',
-          dueDate: data.due_date || data.due_time || todo.dueDate,
-          category: data.category || 'General',
-          createdAt: data.created_at || todo.createdAt,
+      if (!res.error && res.data) {
+        return {
+          data: {
+            id: res.data.id,
+            title: res.data.task_name || res.data.title || '',
+            description: res.data.description || '',
+            status: res.data.status || 'pending',
+            priority: res.data.priority || 'medium',
+            dueDate: res.data.due_date || todo.dueDate,
+            category: res.data.category || 'General',
+            createdAt: res.data.created_at || todo.createdAt,
+          },
+          error: null,
         };
-
-        return { data: savedTodo, error: null };
       }
     } catch (e: any) {
       console.error('Error saving todo:', e);
@@ -907,12 +694,10 @@ export async function syncSaveTodo(
 }
 
 export async function syncDeleteTodo(userId: string, todoId: string): Promise<boolean> {
-  const supabase = getSupabase();
-  if (supabase) {
+  const client = getSupabase();
+  if (client) {
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const effectiveUserId = authData?.user?.id || userId;
-      await supabase.from('todos').delete().eq('id', todoId).eq('user_id', effectiveUserId);
+      await client.from('todos').delete().eq('id', todoId).eq('user_id', userId);
     } catch (e) {
       console.warn('Error deleting todo:', e);
     }

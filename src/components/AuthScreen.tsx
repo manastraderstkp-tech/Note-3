@@ -5,10 +5,12 @@ import {
   User,
   ArrowRight,
   ShieldCheck,
+  Sparkles,
   Eye,
   EyeOff,
   CheckCircle2,
   AlertCircle,
+  KeyRound,
   Sun,
   Moon,
   CheckSquare,
@@ -49,6 +51,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isUnverified, setIsUnverified] = useState(false);
   const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [verificationModalOpen, setVerificationModalOpen] = useState(false);
 
   const { isConfigured } = getStoredSupabaseConfig();
 
@@ -162,7 +165,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         raw.toLowerCase().includes('network') ||
         raw.toLowerCase().includes('err_name_not_resolved')
       ) {
-        setError('Unable to connect to Supabase backend. Please verify your Supabase URL and Anon Key in config.ts.');
+        setError('Unable to connect to Supabase backend. Please verify your Supabase URL and Anon Key in config.ts or click "Setup Supabase".');
       } else {
         setError(raw || 'Authentication failed. Please try again.');
       }
@@ -180,7 +183,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         <div className="absolute -bottom-40 left-1/3 h-96 w-96 rounded-full bg-amber-500/5 blur-3xl dark:bg-amber-500/10" />
       </div>
 
-      {/* Top Navbar */}
+      {/* Top Navbar with Logo, Status & Dark Mode Toggle */}
       <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-6 sm:px-8">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 shadow-md shadow-indigo-600/30 text-white font-bold">
@@ -202,6 +205,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Supabase Config / Connect Backend button */}
           {onOpenConfig && (
             <button
               id="btn-auth-screen-config"
@@ -214,6 +218,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </button>
           )}
 
+          {/* Theme Toggle Button */}
           <button
             id="btn-auth-theme-toggle"
             type="button"
@@ -229,6 +234,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       {/* Main Center Auth Container */}
       <main className="relative z-10 flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
         <div className="w-full max-w-md">
+          {/* Card Box */}
           <div
             id="card-auth-container"
             className="overflow-hidden rounded-3xl border border-slate-200/90 bg-white shadow-xl shadow-slate-200/50 transition-all dark:border-slate-800 dark:bg-slate-900 dark:shadow-2xl dark:shadow-slate-950/80"
@@ -290,7 +296,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
             {/* Form Body */}
             <div className="p-6 sm:p-7">
-              {/* Error Message */}
               {error && (
                 <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300 animate-fadeIn">
                   <div className="flex items-start gap-2.5">
@@ -323,11 +328,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 </div>
               )}
 
-              {/* Success Message Above Form */}
               {successMessage && (
-                <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300 animate-fadeIn">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                  <span className="font-semibold leading-relaxed">{successMessage}</span>
+                <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300 animate-fadeIn">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                  <span className="font-medium">{successMessage}</span>
                 </div>
               )}
 
@@ -491,6 +495,84 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           </div>
         </div>
       </main>
+
+      {/* Verification Sent Success Modal / Dialog */}
+      {verificationModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md overflow-hidden rounded-3xl border border-slate-200/90 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-800 px-6 py-6 text-white text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-md shadow-inner mb-3">
+                <Inbox className="h-7 w-7 text-white" />
+              </div>
+              <h2 className="text-xl font-bold tracking-tight text-white">Verify Your Email</h2>
+              <p className="text-xs text-indigo-100/90 mt-1">
+                A confirmation link has been dispatched to your inbox
+              </p>
+            </div>
+
+            <div className="p-6">
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 dark:border-indigo-950 dark:bg-indigo-950/40 text-center">
+                <p className="text-xs text-slate-600 dark:text-slate-300">
+                  We've sent an activation link to:
+                </p>
+                <p className="mt-1 font-semibold text-sm text-indigo-700 dark:text-indigo-400 break-all">
+                  {unverifiedEmail || email}
+                </p>
+              </div>
+
+              <div className="mt-4 space-y-2.5 text-xs text-slate-600 dark:text-slate-300">
+                <div className="flex items-start gap-2">
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                    1
+                  </div>
+                  <p>Open your email client and look for the verification email from Supabase.</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                    2
+                  </div>
+                  <p>Click the <strong>"Confirm your mail"</strong> link to verify your account.</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                    3
+                  </div>
+                  <p>Return here to sign in with your email and password.</p>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-2">
+                <button
+                  id="btn-close-verification-modal"
+                  type="button"
+                  onClick={() => {
+                    setVerificationModalOpen(false);
+                    setMode('signin');
+                  }}
+                  className="w-full rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/30 hover:bg-indigo-700 transition active:scale-[0.99]"
+                >
+                  Understood, Proceed to Sign In
+                </button>
+
+                <button
+                  id="btn-modal-resend-verification"
+                  type="button"
+                  onClick={handleResendVerification}
+                  disabled={resending}
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-800 transition disabled:opacity-50"
+                >
+                  {resending ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                  <span>{resending ? 'Sending Email...' : 'Resend Verification Email'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="relative z-10 mx-auto w-full max-w-6xl px-4 py-4 text-center text-xs text-slate-400 dark:text-slate-500">

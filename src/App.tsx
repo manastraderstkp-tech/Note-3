@@ -32,6 +32,7 @@ import {
   getSupabase,
   getStoredSupabaseConfig,
   fetchUserProfile,
+  storeLocalUser,
   syncFetchNotes,
   syncSaveNote,
   syncDeleteNote,
@@ -179,31 +180,18 @@ export default function App() {
 
     // Listen to real-time auth state changes without needing manual page refresh
     const client = getSupabase();
+    let authListener: any = null;
+
     if (client) {
-      const { data: authListener } = client.auth.onAuthStateChange(async (event, session) => {
+      const { data } = client.auth.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_OUT') {
           if (isMounted) {
             setCurrentUser(null);
             setAuthChecking(false);
           }
         } else if (session?.user) {
-          const isOAuth = session.user.app_metadata?.provider === 'google' || session.user.identities?.some((i: any) => i.provider === 'google');
-          const isConfirmed = Boolean(
-            session.user.email_confirmed_at || (session.user as unknown as { confirmed_at?: string }).confirmed_at
-          ) || isOAuth;
-
-          if (!isConfirmed) {
-            // Unverified email: sign out and do not grant access
-            await client.auth.signOut();
-            if (isMounted) {
-              setCurrentUser(null);
-              setAuthChecking(false);
-            }
-            return;
-          }
-
           const userEmail = session.user.email || '';
-          const fullName = session.user.user_metadata?.full_name || userEmail.split('@')[0];
+          const fullName = session.user.user_metadata?.full_name || session.user.user_metadata?.name || userEmail.split('@')[0];
           // Fetch role dynamically from profiles table
           const { role } = await fetchUserProfile(session.user.id, userEmail, fullName);
           const sessionUser: UserSession = {
@@ -214,20 +202,37 @@ export default function App() {
             isDemo: false,
             createdAt: session.user.created_at,
           };
+          storeLocalUser(sessionUser);
           if (isMounted) {
             setCurrentUser(sessionUser);
             setAuthChecking(false);
           }
         }
       });
-
-      return () => {
-        isMounted = false;
-        authListener.subscription.unsubscribe();
-      };
+      authListener = data;
     } else {
       setAuthChecking(false);
     }
+
+    // Listen to cross-window popup OAuth success events
+    const handleOAuthMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'SUPABASE_OAUTH_SUCCESS' && event.data?.user) {
+        if (isMounted) {
+          setCurrentUser(event.data.user);
+          setAuthChecking(false);
+        }
+      }
+    };
+
+    window.addEventListener('message', handleOAuthMessage);
+
+    return () => {
+      isMounted = false;
+      if (authListener?.subscription) {
+        authListener.subscription.unsubscribe();
+      }
+      window.removeEventListener('message', handleOAuthMessage);
+    };
   }, []);
 
   // Fetch data whenever currentUser changes

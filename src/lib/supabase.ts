@@ -701,14 +701,25 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
           }
         }
 
+        // If this is an OAuth popup window, notify opener and close
+        if (typeof window !== 'undefined' && window.opener && window.opener !== window) {
+          try {
+            window.opener.postMessage({ type: 'SUPABASE_OAUTH_SUCCESS', user: sessionUser }, '*');
+            setTimeout(() => window.close(), 300);
+          } catch {
+            // ignore
+          }
+        }
+
         return sessionUser;
       }
     } catch (e) {
       console.warn('Error getting initial session:', e);
     }
   }
-  localStorage.removeItem(STORAGE_KEY_USER);
-  return null;
+
+  // Fallback to local stored user session if client or network is initializing
+  return getCurrentStoredUser();
 }
 
 // -----------------------------------------------------------------------------

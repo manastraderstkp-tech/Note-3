@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Calendar, CheckCircle, Tag, AlertCircle, Bell, Clock, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Calendar, CheckCircle, Tag, AlertCircle, Bell, Clock, Loader2, ChevronDown, Trash2 } from 'lucide-react';
 import { TodoTask, TaskStatus, TaskPriority } from '../types';
 
 interface TodoModalProps {
@@ -28,6 +28,46 @@ export const TodoModal: React.FC<TodoModalProps> = ({
   const [hasReminder, setHasReminder] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Manage custom category dropdown list with LocalStorage caching
+  const DEFAULT_CATEGORIES = ['Engineering', 'Design', 'QA', 'Marketing', 'Management', 'Finance', 'Personal'];
+  const [categoriesList, setCategoriesList] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('ws_todo_categories');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {}
+    return DEFAULT_CATEGORIES;
+  });
+
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [newCategoryInput, setNewCategoryInput] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem('ws_todo_categories', JSON.stringify(categoriesList));
+  }, [categoriesList]);
+
+  // Click outside listener for dropdown close
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleRemoveCategory = (catToRemove: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = categoriesList.filter(cat => cat !== catToRemove);
+    setCategoriesList(updated);
+    if (category === catToRemove) {
+      setCategory(updated[0] || 'Personal');
+    }
+  };
 
   useEffect(() => {
     if (initialTask) {
@@ -219,17 +259,82 @@ export const TodoModal: React.FC<TodoModalProps> = ({
               />
             </div>
 
-            <div>
+            <div ref={dropdownRef} className="relative">
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Category
               </label>
-              <input
-                type="text"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="Engineering, Design, QA..."
-                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder-slate-500 dark:focus:bg-slate-900"
-              />
+              
+              <div className="relative mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                  className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                >
+                  <span>{category}</span>
+                  <ChevronDown className="h-4 w-4 text-slate-400" />
+                </button>
+
+                {isDropdownOpen && (
+                  <div className="absolute right-0 z-50 mt-1 w-full rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-800 dark:bg-slate-950">
+                    <div className="max-h-40 overflow-y-auto space-y-0.5">
+                      {categoriesList.map((cat) => (
+                        <div
+                          key={cat}
+                          onClick={() => {
+                            setCategory(cat);
+                            setIsDropdownOpen(false);
+                          }}
+                          className={`flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-bold cursor-pointer transition ${
+                            category === cat
+                              ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400'
+                              : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-900'
+                          }`}
+                        >
+                          <span>{cat}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleRemoveCategory(cat, e)}
+                            className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950/40"
+                            title="Remove category"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="border-t border-slate-100 dark:border-slate-800/80 pt-2 mt-2">
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          placeholder="Add custom..."
+                          value={newCategoryInput}
+                          onChange={(e) => setNewCategoryInput(e.target.value)}
+                          className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold outline-none focus:border-indigo-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const trimmed = newCategoryInput.trim();
+                            if (!trimmed) return;
+                            if (categoriesList.some(cat => cat.toLowerCase() === trimmed.toLowerCase())) {
+                              setNewCategoryInput('');
+                              return;
+                            }
+                            const updated = [...categoriesList, trimmed];
+                            setCategoriesList(updated);
+                            setCategory(trimmed);
+                            setNewCategoryInput('');
+                          }}
+                          className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-bold text-white hover:bg-indigo-500"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

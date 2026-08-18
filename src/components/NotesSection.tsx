@@ -12,7 +12,8 @@ import {
   Sparkles,
   Check,
   Bell,
-  Clock
+  Clock,
+  Paperclip
 } from 'lucide-react';
 import { Note } from '../types';
 
@@ -195,6 +196,13 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
                         <span>{formatReminder(note.notifyAt)}</span>
                       </span>
                     )}
+
+                    {note.attachments && note.attachments.length > 0 && (
+                      <span className="flex items-center gap-1 rounded-md bg-indigo-100/90 px-2 py-0.5 text-[10px] font-bold text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-300" title={`${note.attachments.length} attachment(s)`}>
+                        <Paperclip className="h-2.5 w-2.5" />
+                        <span>{note.attachments.length}</span>
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1">
@@ -222,6 +230,21 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
                 >
                   {note.title}
                 </h3>
+
+                {/* Optional Image */}
+                {note.imageUrl && (
+                  <div 
+                    onClick={() => onEditNote(note)}
+                    className="mt-2 relative h-32 w-full overflow-hidden rounded-xl border border-slate-200/50 dark:border-slate-800 cursor-pointer"
+                  >
+                    <img 
+                      src={note.imageUrl} 
+                      alt="Note attached" 
+                      className="object-cover w-full h-full transition-transform duration-300 group-hover:scale-105" 
+                      onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/600x400/1e293b/475569?text=Invalid+Image+URL'; }}
+                    />
+                  </div>
+                )}
 
                 {/* Content excerpt */}
                 <p

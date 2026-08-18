@@ -726,6 +726,8 @@ export async function syncFetchNotes(userId: string): Promise<{ notes: Note[]; i
           tags: Array.isArray(item.tags) ? item.tags : [],
           category: item.category || 'General',
           colorScheme: item.color_scheme || 'default',
+          imageUrl: item.image_url || undefined,
+          attachments: item.attachments || [],
           isPinned: Boolean(item.is_pinned),
           notifyAt: item.notify_at || undefined,
           notified: Boolean(item.notified),
@@ -764,8 +766,8 @@ export async function syncSaveNote(
 
   if (client) {
     try {
-      const hasValidUuid = isValidUUID(note.id);
       const payload: Record<string, any> = {
+        id: note.id,
         user_id: userId,
         title: note.title,
         content: note.content || '',
@@ -773,17 +775,15 @@ export async function syncSaveNote(
         is_pinned: Boolean(note.isPinned),
         color_scheme: note.colorScheme || 'default',
         category: note.category || 'General',
+        image_url: note.imageUrl || null,
+        attachments: note.attachments || [],
         notify_at: note.notifyAt || null,
         notified: Boolean(note.notified),
         created_at: note.createdAt || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
 
-      if (hasValidUuid) payload.id = note.id;
-
-      const res = hasValidUuid
-        ? await client.from('notes').upsert(payload, { onConflict: 'id' }).select().single()
-        : await client.from('notes').insert(payload).select().single();
+      const res = await client.from('notes').upsert(payload, { onConflict: 'id' }).select().single();
 
       if (!res.error && res.data) {
         const savedNote: Note = {
@@ -793,6 +793,8 @@ export async function syncSaveNote(
           tags: Array.isArray(res.data.tags) ? res.data.tags : [],
           category: res.data.category || 'General',
           colorScheme: res.data.color_scheme || 'default',
+          imageUrl: res.data.image_url || undefined,
+          attachments: res.data.attachments || [],
           isPinned: Boolean(res.data.is_pinned),
           notifyAt: res.data.notify_at || undefined,
           notified: Boolean(res.data.notified),
@@ -914,8 +916,8 @@ export async function syncSaveTodo(
 
   if (client) {
     try {
-      const hasValidUuid = isValidUUID(todo.id);
       const payload: Record<string, any> = {
+        id: todo.id,
         user_id: userId,
         task_name: todo.title,
         description: todo.description || '',
@@ -926,11 +928,7 @@ export async function syncSaveTodo(
         created_at: todo.createdAt || new Date().toISOString(),
       };
 
-      if (hasValidUuid) payload.id = todo.id;
-
-      const res = hasValidUuid
-        ? await client.from('todos').upsert(payload, { onConflict: 'id' }).select().single()
-        : await client.from('todos').insert(payload).select().single();
+      const res = await client.from('todos').upsert(payload, { onConflict: 'id' }).select().single();
 
       if (!res.error && res.data) {
         const savedTodo: TodoTask = {
@@ -1064,9 +1062,9 @@ export async function syncSaveWorkLog(
 
   if (client) {
     try {
-      const hasValidUuid = isValidUUID(log.id);
       const durationMinutes = Math.round(log.hoursSpent * 60);
       const payload: Record<string, any> = {
+        id: log.id,
         user_id: userId,
         project_name: log.projectName,
         description: log.taskDescription,
@@ -1080,11 +1078,7 @@ export async function syncSaveWorkLog(
         created_at: log.createdAt || new Date().toISOString(),
       };
 
-      if (hasValidUuid) payload.id = log.id;
-
-      const res = hasValidUuid
-        ? await client.from('work_logs').upsert(payload, { onConflict: 'id' }).select().single()
-        : await client.from('work_logs').insert(payload).select().single();
+      const res = await client.from('work_logs').upsert(payload, { onConflict: 'id' }).select().single();
 
       if (!res.error && res.data) {
         const savedLog: WorkLog = {
@@ -1698,12 +1692,18 @@ CREATE TABLE IF NOT EXISTS public.notes (
     tags TEXT[] DEFAULT '{}',
     color_scheme TEXT DEFAULT 'default',
     category TEXT DEFAULT 'General',
+    image_url TEXT,
+    attachments JSONB DEFAULT '[]'::jsonb,
     is_pinned BOOLEAN DEFAULT FALSE,
     notify_at TIMESTAMPTZ,
     notified BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+-- Ensure schema updates safely for existing tables
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
 
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 
@@ -1838,7 +1838,76 @@ CREATE POLICY "Files update policy" ON public.files FOR UPDATE
 CREATE POLICY "Files delete policy" ON public.files FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
--- 6. Ensure default admin role
+-- 6. SHARE MARKET TABLES
+CREATE TABLE IF NOT EXISTS public.share_portfolio (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    symbol TEXT NOT NULL,
+    units INTEGER NOT NULL,
+    buy_price NUMERIC NOT NULL,
+    purchase_date TEXT NOT NULL,
+    wacc NUMERIC NOT NULL,
+    total_dividends NUMERIC DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE public.share_portfolio ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Portfolio select policy" ON public.share_portfolio;
+DROP POLICY IF EXISTS "Portfolio insert policy" ON public.share_portfolio;
+DROP POLICY IF EXISTS "Portfolio update policy" ON public.share_portfolio;
+DROP POLICY IF EXISTS "Portfolio delete policy" ON public.share_portfolio;
+
+CREATE POLICY "Portfolio select policy" ON public.share_portfolio FOR SELECT USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Portfolio insert policy" ON public.share_portfolio FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Portfolio update policy" ON public.share_portfolio FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Portfolio delete policy" ON public.share_portfolio FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE TABLE IF NOT EXISTS public.share_trades (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    symbol TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('BUY', 'SELL')),
+    units INTEGER NOT NULL,
+    price NUMERIC NOT NULL,
+    trade_date TEXT NOT NULL,
+    strategy TEXT,
+    psychology_notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE public.share_trades ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Trades select policy" ON public.share_trades;
+DROP POLICY IF EXISTS "Trades insert policy" ON public.share_trades;
+DROP POLICY IF EXISTS "Trades update policy" ON public.share_trades;
+DROP POLICY IF EXISTS "Trades delete policy" ON public.share_trades;
+
+CREATE POLICY "Trades select policy" ON public.share_trades FOR SELECT USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Trades insert policy" ON public.share_trades FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Trades update policy" ON public.share_trades FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Trades delete policy" ON public.share_trades FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE TABLE IF NOT EXISTS public.share_watchlist (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    symbol TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE public.share_watchlist ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Watchlist select policy" ON public.share_watchlist;
+DROP POLICY IF EXISTS "Watchlist insert policy" ON public.share_watchlist;
+DROP POLICY IF EXISTS "Watchlist update policy" ON public.share_watchlist;
+DROP POLICY IF EXISTS "Watchlist delete policy" ON public.share_watchlist;
+
+CREATE POLICY "Watchlist select policy" ON public.share_watchlist FOR SELECT USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Watchlist insert policy" ON public.share_watchlist FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Watchlist update policy" ON public.share_watchlist FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Watchlist delete policy" ON public.share_watchlist FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
+
+-- 7. Ensure default admin role
 UPDATE public.profiles
 SET role = 'admin', updated_at = NOW()
 WHERE email = 'manastraderstkp@gmail.com';

@@ -1,4 +1,4 @@
-export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files';
+export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket';
 
 export type UserRole = 'admin' | 'user';
 
@@ -58,6 +58,8 @@ export interface Note {
   category: string;
   colorScheme?: 'default' | 'indigo' | 'amber' | 'emerald' | 'rose' | 'sky';
   isPinned: boolean;
+  imageUrl?: string; // Optional cover image URL
+  attachments?: { id: string; name: string; url: string; size?: number }[]; // Files attached to the note
   notifyAt?: string; // ISO datetime string e.g. 2026-08-14T14:30
   notified?: boolean;
   createdAt: string;
@@ -119,5 +121,40 @@ export interface MetricStats {
   totalHoursWeek: number;
   totalFolders?: number;
   totalFiles?: number;
+}
+
+export interface StockHoldings {
+  id: string;
+  symbol: string;
+  units: number;
+  buyPrice: number;
+  purchaseDate: string;
+  wacc: number;
+  totalDividends: number;
+  createdAt: string;
+}
+
+export interface TradeLog {
+  id: string;
+  symbol: string;
+  action: 'BUY' | 'SELL';
+  units: number;
+  price: number;
+  tradeDate: string;
+  strategy: string;
+  psychologyNotes: string;
+  createdAt: string;
+}
+
+export interface WatchlistStock {
+  id: string;
+  symbol: string;
+  createdAt: string;
+}
+
+export interface ShareMarketState {
+  portfolio: StockHoldings[];
+  trades: TradeLog[];
+  watchlist: string[];
 }
 

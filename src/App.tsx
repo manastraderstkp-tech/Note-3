@@ -22,6 +22,7 @@ import { ExportModal } from './components/ExportModal';
 import { UserRoleManagementModal } from './components/UserRoleManagementModal';
 import { PersonalSpaceView } from './components/PersonalSpaceView';
 import { FileManager } from './components/FileManager';
+import { ShareMarketView } from './components/ShareMarketView';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
 import { Note, TodoTask, WorkLog, Folder, UserFile, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole } from './types';
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from './data/initialData';
@@ -981,6 +982,13 @@ export default function App() {
                 onDeleteFile={handleDeleteFile}
                 onShowToast={showToast}
                 searchQuery={searchQuery}
+              />
+            )}
+
+            {activeSection === 'sharemarket' && (
+              <ShareMarketView
+                userId={currentUser?.id || 'demo-user'}
+                onShowToast={showToast}
               />
             )}
           </div>

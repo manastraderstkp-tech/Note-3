@@ -169,12 +169,18 @@ CREATE TABLE IF NOT EXISTS public.notes (
     color TEXT DEFAULT 'default',
     color_scheme TEXT DEFAULT 'default',
     category TEXT DEFAULT 'General',
+    image_url TEXT,
+    attachments JSONB DEFAULT '[]'::jsonb,
     is_pinned BOOLEAN DEFAULT FALSE,
     notify_at TIMESTAMPTZ,
     notified BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);`,
+);
+
+-- Ensure schema updates safely for existing tables
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;`,
 
     todos: `-- TODOS TABLE
 CREATE TABLE IF NOT EXISTS public.todos (

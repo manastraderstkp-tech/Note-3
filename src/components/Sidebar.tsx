@@ -11,6 +11,7 @@ import {
   Flame,
   CheckCircle,
   FolderOpen,
+  TrendingUp,
   Database,
   KeyRound,
   ShieldCheck,
@@ -97,6 +98,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: FolderOpen,
       badge: null,
       color: 'text-sky-500',
+    },
+    {
+      id: 'sharemarket' as NavSection,
+      label: 'Share Market',
+      icon: TrendingUp,
+      badge: null,
+      color: 'text-indigo-500',
     },
   ];
 

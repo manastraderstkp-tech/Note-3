@@ -119,6 +119,14 @@ export function formatSupabaseAuthError(err: unknown, defaultMsg: string): strin
   const lower = rawMsg.toLowerCase();
 
   if (
+    lower.includes('unsupported provider') ||
+    lower.includes('provider is not enabled') ||
+    lower.includes('provider_disabled')
+  ) {
+    return 'Google Provider is currently disabled in your Supabase Dashboard. Please go to Authentication -> Providers -> Google, toggle "Enable Sign in with Google" to ON, enter your Client ID & Secret, and click Save.';
+  }
+
+  if (
     lower.includes('failed to fetch') ||
     lower.includes('networkerror') ||
     lower.includes('network request failed') ||
@@ -378,11 +386,8 @@ export async function signInWithGoogle(customRedirectTo?: string): Promise<{ dat
       provider: 'google',
       options: {
         redirectTo: redirectUrl,
-        skipBrowserRedirect: isIframe, // In iframe, prevent browser from loading accounts.google.com inside frame
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
+        skipBrowserRedirect: isIframe,
+        scopes: 'email profile',
       },
     });
 
@@ -395,7 +400,7 @@ export async function signInWithGoogle(customRedirectTo?: string): Promise<{ dat
         // Open Google Login in a clean popup window to bypass iframe X-Frame-Options blocking
         const popup = window.open(
           data.url,
-          'google_oauth_popup',
+          'oauth_popup',
           'width=520,height=660,menubar=no,toolbar=no,status=no'
         );
 
@@ -433,6 +438,45 @@ export async function signInWithGoogle(customRedirectTo?: string): Promise<{ dat
     return { data, error: null };
   } catch (err: unknown) {
     return { data: null, error: formatSupabaseAuthError(err, 'Failed to initiate Google authentication.') };
+  }
+}
+
+export async function signInWithGitHub(customRedirectTo?: string): Promise<{ data: any; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { data: null, error: 'Supabase client is not available.' };
+  }
+
+  try {
+    const redirectUrl = customRedirectTo || (typeof window !== 'undefined' ? window.location.origin : EMAIL_REDIRECT_URL);
+    const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+
+    const { data, error } = await client.auth.signInWithOAuth({
+      provider: 'github',
+      options: {
+        redirectTo: redirectUrl,
+        skipBrowserRedirect: isIframe,
+      },
+    });
+
+    if (error) {
+      return { data: null, error: formatSupabaseAuthError(error, error.message) };
+    }
+
+    if (data?.url && typeof window !== 'undefined') {
+      if (isIframe) {
+        const popup = window.open(data.url, 'oauth_popup', 'width=520,height=660,menubar=no,toolbar=no,status=no');
+        if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+          window.open(data.url, '_blank');
+        }
+      } else {
+        window.location.href = data.url;
+      }
+    }
+
+    return { data, error: null };
+  } catch (err: unknown) {
+    return { data: null, error: formatSupabaseAuthError(err, 'Failed to initiate GitHub authentication.') };
   }
 }
 

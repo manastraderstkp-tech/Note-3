@@ -187,9 +187,10 @@ export default function App() {
             setAuthChecking(false);
           }
         } else if (session?.user) {
+          const isOAuth = session.user.app_metadata?.provider === 'google' || session.user.identities?.some((i: any) => i.provider === 'google');
           const isConfirmed = Boolean(
             session.user.email_confirmed_at || (session.user as unknown as { confirmed_at?: string }).confirmed_at
-          );
+          ) || isOAuth;
 
           if (!isConfirmed) {
             // Unverified email: sign out and do not grant access

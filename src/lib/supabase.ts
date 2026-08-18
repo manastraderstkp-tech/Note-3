@@ -362,14 +362,14 @@ export function storeLocalUser(user: UserSession): void {
   }
 }
 
-export async function signInWithGoogle(): Promise<{ data: any; error: string | null }> {
+export async function signInWithGoogle(customRedirectTo?: string): Promise<{ data: any; error: string | null }> {
   const client = getSupabase();
   if (!client) {
-    return { data: null, error: 'Supabase client is not available.' };
+    return { data: null, error: 'Supabase client is not available. Please verify your Supabase URL & Anon Key in settings.' };
   }
 
   try {
-    const redirectUrl = typeof window !== 'undefined' ? window.location.origin : EMAIL_REDIRECT_URL;
+    const redirectUrl = customRedirectTo || (typeof window !== 'undefined' ? window.location.origin : EMAIL_REDIRECT_URL);
     const { data, error } = await client.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -385,9 +385,58 @@ export async function signInWithGoogle(): Promise<{ data: any; error: string | n
       return { data: null, error: formatSupabaseAuthError(error, error.message) };
     }
 
+    if (data?.url && typeof window !== 'undefined') {
+      window.location.href = data.url;
+    }
+
     return { data, error: null };
   } catch (err: unknown) {
-    return { data: null, error: formatSupabaseAuthError(err, 'Failed to sign in with Google.') };
+    return { data: null, error: formatSupabaseAuthError(err, 'Failed to initiate Google authentication.') };
+  }
+}
+
+export async function handleOAuthCallback(): Promise<{ user: UserSession | null; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { user: null, error: 'Supabase client is not configured.' };
+  }
+
+  try {
+    const {
+      data: { session },
+      error,
+    } = await client.auth.getSession();
+
+    if (error) {
+      return { user: null, error: formatSupabaseAuthError(error, error.message) };
+    }
+
+    if (session?.user) {
+      const user = session.user;
+      const userEmail = user.email || '';
+      const fullName = user.user_metadata?.full_name || user.user_metadata?.name || userEmail.split('@')[0];
+      const { role } = await fetchUserProfile(user.id, userEmail, fullName);
+      const sessionUser: UserSession = {
+        id: user.id,
+        email: userEmail,
+        fullName,
+        role,
+        isDemo: false,
+        createdAt: user.created_at,
+      };
+      storeLocalUser(sessionUser);
+
+      // Clean OAuth query/hash from the browser URL address bar
+      if (typeof window !== 'undefined' && (window.location.hash.includes('access_token') || window.location.search.includes('code='))) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      return { user: sessionUser, error: null };
+    }
+
+    return { user: null, error: null };
+  } catch (err: unknown) {
+    return { user: null, error: formatSupabaseAuthError(err, 'Error processing OAuth callback.') };
   }
 }
 
@@ -524,23 +573,49 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
   const client = getSupabase();
   if (client) {
     try {
+      // Check active session (handles OAuth redirects, token exchange, and persisted tokens)
       const {
-        data: { user },
-        error,
-      } = await client.auth.getUser();
-      if (!error && user) {
-        const userEmail = user.email || '';
-        const fullName = user.user_metadata?.full_name || userEmail.split('@')[0];
-        const { role } = await fetchUserProfile(user.id, userEmail, fullName);
+        data: { session },
+      } = await client.auth.getSession();
+
+      let targetUser = session?.user;
+
+      if (!targetUser) {
+        const {
+          data: { user: fetchedUser },
+          error: userError,
+        } = await client.auth.getUser();
+        if (!userError && fetchedUser) {
+          targetUser = fetchedUser;
+        }
+      }
+
+      if (targetUser) {
+        const userEmail = targetUser.email || '';
+        const fullName = targetUser.user_metadata?.full_name || targetUser.user_metadata?.name || userEmail.split('@')[0];
+        const { role } = await fetchUserProfile(targetUser.id, userEmail, fullName);
         const sessionUser: UserSession = {
-          id: user.id,
+          id: targetUser.id,
           email: userEmail,
           fullName,
           role,
           isDemo: false,
-          createdAt: user.created_at,
+          createdAt: targetUser.created_at,
         };
         storeLocalUser(sessionUser);
+
+        // Clean up URL if access_token or code parameters exist from OAuth redirect
+        if (
+          typeof window !== 'undefined' &&
+          (window.location.hash.includes('access_token') || window.location.search.includes('code='))
+        ) {
+          try {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          } catch {
+            // Ignore history state error
+          }
+        }
+
         return sessionUser;
       }
     } catch (e) {

@@ -299,18 +299,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
           {/* Google OAuth Button */}
           <button
-            id="btn-auth-google-screen"
+            id="btn-auth-google-modal"
             type="button"
             onClick={handleGoogleSignIn}
             disabled={googleLoading || loading}
-            className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-300 bg-white py-3 px-4 text-xs font-bold text-slate-800 shadow-xs transition hover:border-slate-400 hover:bg-slate-50 active:scale-[0.99] disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:hover:border-slate-600"
+            className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-300 bg-white py-3 px-4 text-xs font-bold text-slate-800 shadow-xs transition hover:border-slate-400 hover:bg-slate-50 active:scale-[0.99] disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:hover:border-slate-600 cursor-pointer"
           >
             {googleLoading ? (
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent dark:border-indigo-400" />
             ) : (
               <GoogleIcon className="h-4 w-4" />
             )}
-            <span>{googleLoading ? 'Connecting to Google...' : 'Continue with Google'}</span>
+            <span>
+              {googleLoading
+                ? 'Connecting to Google...'
+                : mode === 'signup'
+                ? 'Sign Up with Google'
+                : 'Sign In with Google'}
+            </span>
           </button>
 
           {/* OR Divider */}

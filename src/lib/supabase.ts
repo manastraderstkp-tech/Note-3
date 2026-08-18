@@ -370,10 +370,15 @@ export async function signInWithGoogle(customRedirectTo?: string): Promise<{ dat
 
   try {
     const redirectUrl = customRedirectTo || (typeof window !== 'undefined' ? window.location.origin : EMAIL_REDIRECT_URL);
+    
+    // Check if we are embedded in an iframe (e.g. AI Studio preview panel)
+    const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+
     const { data, error } = await client.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: redirectUrl,
+        skipBrowserRedirect: isIframe, // In iframe, prevent browser from loading accounts.google.com inside frame
         queryParams: {
           access_type: 'offline',
           prompt: 'consent',
@@ -386,7 +391,43 @@ export async function signInWithGoogle(customRedirectTo?: string): Promise<{ dat
     }
 
     if (data?.url && typeof window !== 'undefined') {
-      window.location.href = data.url;
+      if (isIframe) {
+        // Open Google Login in a clean popup window to bypass iframe X-Frame-Options blocking
+        const popup = window.open(
+          data.url,
+          'google_oauth_popup',
+          'width=520,height=660,menubar=no,toolbar=no,status=no'
+        );
+
+        if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+          // If browser popup blocker intercepts, open as top level / new tab
+          window.open(data.url, '_blank');
+        } else {
+          // Poll every 1.2s to detect when popup completes authentication
+          const pollTimer = setInterval(async () => {
+            try {
+              if (popup.closed) {
+                clearInterval(pollTimer);
+              }
+              const { data: sessionData } = await client.auth.getSession();
+              if (sessionData?.session?.user) {
+                clearInterval(pollTimer);
+                try {
+                  popup.close();
+                } catch {
+                  // ignore
+                }
+              }
+            } catch {
+              // ignore polling error
+            }
+          }, 1200);
+
+          setTimeout(() => clearInterval(pollTimer), 120000);
+        }
+      } else {
+        window.location.href = data.url;
+      }
     }
 
     return { data, error: null };

@@ -378,8 +378,6 @@ export async function signInWithGoogle(customRedirectTo?: string): Promise<{ dat
 
   try {
     const redirectUrl = customRedirectTo || (typeof window !== 'undefined' ? window.location.origin : EMAIL_REDIRECT_URL);
-    
-    // Check if we are embedded in an iframe (e.g. AI Studio preview panel)
     const isIframe = typeof window !== 'undefined' && window.self !== window.top;
 
     const { data, error } = await client.auth.signInWithOAuth({
@@ -397,39 +395,16 @@ export async function signInWithGoogle(customRedirectTo?: string): Promise<{ dat
 
     if (data?.url && typeof window !== 'undefined') {
       if (isIframe) {
-        // Open Google Login in a clean popup window to bypass iframe X-Frame-Options blocking
-        const popup = window.open(
-          data.url,
-          'oauth_popup',
-          'width=520,height=660,menubar=no,toolbar=no,status=no'
-        );
-
-        if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-          // If browser popup blocker intercepts, open as top level / new tab
-          window.open(data.url, '_blank');
-        } else {
-          // Poll every 1.2s to detect when popup completes authentication
-          const pollTimer = setInterval(async () => {
-            try {
-              if (popup.closed) {
-                clearInterval(pollTimer);
-              }
-              const { data: sessionData } = await client.auth.getSession();
-              if (sessionData?.session?.user) {
-                clearInterval(pollTimer);
-                try {
-                  popup.close();
-                } catch {
-                  // ignore
-                }
-              }
-            } catch {
-              // ignore polling error
-            }
-          }, 1200);
-
-          setTimeout(() => clearInterval(pollTimer), 120000);
+        // In iframe preview panel, attempt top window navigation or open full tab
+        try {
+          if (window.top && window.top !== window) {
+            window.top.location.href = data.url;
+            return { data, error: null };
+          }
+        } catch {
+          // If cross-origin security prevents top navigation, open in new tab
         }
+        window.open(data.url, '_blank');
       } else {
         window.location.href = data.url;
       }
@@ -465,10 +440,15 @@ export async function signInWithGitHub(customRedirectTo?: string): Promise<{ dat
 
     if (data?.url && typeof window !== 'undefined') {
       if (isIframe) {
-        const popup = window.open(data.url, 'oauth_popup', 'width=520,height=660,menubar=no,toolbar=no,status=no');
-        if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-          window.open(data.url, '_blank');
+        try {
+          if (window.top && window.top !== window) {
+            window.top.location.href = data.url;
+            return { data, error: null };
+          }
+        } catch {
+          // ignore
         }
+        window.open(data.url, '_blank');
       } else {
         window.location.href = data.url;
       }
@@ -1663,13 +1643,51 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Profiles Policies
-CREATE POLICY "Profiles view policy" ON public.profiles FOR SELECT
-    USING (auth.uid() = id OR public.is_admin());
-CREATE POLICY "Profiles update policy" ON public.profiles FOR UPDATE
+-- Trigger to Automatically Create Profile on Signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.profiles (id, email, full_name, role, created_at, updated_at)
+    VALUES (
+        NEW.id,
+        NEW.email,
+        COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+        CASE 
+            WHEN LOWER(NEW.email) = 'manastraderstkp@gmail.com' THEN 'admin'
+            ELSE 'user'
+        END,
+        TIMEZONE('utc'::text, NOW()),
+        TIMEZONE('utc'::text, NOW())
+    )
+    ON CONFLICT (id) DO UPDATE
+    SET email = EXCLUDED.email,
+        full_name = EXCLUDED.full_name,
+        updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Profiles Policies (Idempotent)
+DROP POLICY IF EXISTS "Profiles view policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles select policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles update policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles insert policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles delete policy" ON public.profiles;
+
+CREATE POLICY "Profiles select policy" ON public.profiles FOR SELECT
     USING (auth.uid() = id OR public.is_admin());
 CREATE POLICY "Profiles insert policy" ON public.profiles FOR INSERT
     WITH CHECK (auth.uid() = id OR public.is_admin());
+CREATE POLICY "Profiles update policy" ON public.profiles FOR UPDATE
+    USING (auth.uid() = id OR public.is_admin())
+    WITH CHECK (auth.uid() = id OR public.is_admin());
+CREATE POLICY "Profiles delete policy" ON public.profiles FOR DELETE
+    USING (public.is_admin());
 
 -- 2. NOTES TABLE
 CREATE TABLE IF NOT EXISTS public.notes (
@@ -1689,12 +1707,18 @@ CREATE TABLE IF NOT EXISTS public.notes (
 
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Notes select policy" ON public.notes;
+DROP POLICY IF EXISTS "Notes insert policy" ON public.notes;
+DROP POLICY IF EXISTS "Notes update policy" ON public.notes;
+DROP POLICY IF EXISTS "Notes delete policy" ON public.notes;
+
 CREATE POLICY "Notes select policy" ON public.notes FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Notes insert policy" ON public.notes FOR INSERT
     WITH CHECK (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Notes update policy" ON public.notes FOR UPDATE
-    USING (auth.uid() = user_id OR public.is_admin());
+    USING (auth.uid() = user_id OR public.is_admin())
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Notes delete policy" ON public.notes FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
@@ -1713,6 +1737,11 @@ CREATE TABLE IF NOT EXISTS public.todos (
 );
 
 ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Todos select policy" ON public.todos;
+DROP POLICY IF EXISTS "Todos insert policy" ON public.todos;
+DROP POLICY IF EXISTS "Todos update policy" ON public.todos;
+DROP POLICY IF EXISTS "Todos delete policy" ON public.todos;
 
 CREATE POLICY "Todos select policy" ON public.todos FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
@@ -1741,6 +1770,11 @@ CREATE TABLE IF NOT EXISTS public.work_logs (
 
 ALTER TABLE public.work_logs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "WorkLogs select policy" ON public.work_logs;
+DROP POLICY IF EXISTS "WorkLogs insert policy" ON public.work_logs;
+DROP POLICY IF EXISTS "WorkLogs update policy" ON public.work_logs;
+DROP POLICY IF EXISTS "WorkLogs delete policy" ON public.work_logs;
+
 CREATE POLICY "WorkLogs select policy" ON public.work_logs FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "WorkLogs insert policy" ON public.work_logs FOR INSERT
@@ -1761,6 +1795,11 @@ CREATE TABLE IF NOT EXISTS public.folders (
 );
 
 ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Folders select policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders insert policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders update policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders delete policy" ON public.folders;
 
 CREATE POLICY "Folders select policy" ON public.folders FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
@@ -1785,6 +1824,11 @@ CREATE TABLE IF NOT EXISTS public.files (
 
 ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Files select policy" ON public.files;
+DROP POLICY IF EXISTS "Files insert policy" ON public.files;
+DROP POLICY IF EXISTS "Files update policy" ON public.files;
+DROP POLICY IF EXISTS "Files delete policy" ON public.files;
+
 CREATE POLICY "Files select policy" ON public.files FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Files insert policy" ON public.files FOR INSERT
@@ -1793,4 +1837,9 @@ CREATE POLICY "Files update policy" ON public.files FOR UPDATE
     USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Files delete policy" ON public.files FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
+
+-- 6. Ensure default admin role
+UPDATE public.profiles
+SET role = 'admin', updated_at = NOW()
+WHERE email = 'manastraderstkp@gmail.com';
 `;

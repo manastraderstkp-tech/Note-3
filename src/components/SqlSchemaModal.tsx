@@ -95,20 +95,28 @@ WHERE email = 'manastraderstkp@gmail.com';`,
 -- Admins: Have full system-wide permissions across all rows regardless of user_id
 
 -- PROFILES POLICIES
+DROP POLICY IF EXISTS "Profiles view policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles select policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles update policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles insert policy" ON public.profiles;
+DROP POLICY IF EXISTS "Profiles delete policy" ON public.profiles;
+
 CREATE POLICY "Profiles select policy" ON public.profiles FOR SELECT
     USING (auth.uid() = id OR public.is_admin());
-
 CREATE POLICY "Profiles insert policy" ON public.profiles FOR INSERT
     WITH CHECK (auth.uid() = id OR public.is_admin());
-
 CREATE POLICY "Profiles update policy" ON public.profiles FOR UPDATE
     USING (auth.uid() = id OR public.is_admin())
     WITH CHECK (auth.uid() = id OR public.is_admin());
-
 CREATE POLICY "Profiles delete policy" ON public.profiles FOR DELETE
     USING (public.is_admin());
 
 -- NOTES POLICIES
+DROP POLICY IF EXISTS "Notes select policy" ON public.notes;
+DROP POLICY IF EXISTS "Notes insert policy" ON public.notes;
+DROP POLICY IF EXISTS "Notes update policy" ON public.notes;
+DROP POLICY IF EXISTS "Notes delete policy" ON public.notes;
+
 CREATE POLICY "Notes select policy" ON public.notes FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Notes insert policy" ON public.notes FOR INSERT
@@ -120,6 +128,11 @@ CREATE POLICY "Notes delete policy" ON public.notes FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
 -- TODOS POLICIES
+DROP POLICY IF EXISTS "Todos select policy" ON public.todos;
+DROP POLICY IF EXISTS "Todos insert policy" ON public.todos;
+DROP POLICY IF EXISTS "Todos update policy" ON public.todos;
+DROP POLICY IF EXISTS "Todos delete policy" ON public.todos;
+
 CREATE POLICY "Todos select policy" ON public.todos FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Todos insert policy" ON public.todos FOR INSERT
@@ -131,6 +144,11 @@ CREATE POLICY "Todos delete policy" ON public.todos FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
 -- WORK_LOGS POLICIES
+DROP POLICY IF EXISTS "WorkLogs select policy" ON public.work_logs;
+DROP POLICY IF EXISTS "WorkLogs insert policy" ON public.work_logs;
+DROP POLICY IF EXISTS "WorkLogs update policy" ON public.work_logs;
+DROP POLICY IF EXISTS "WorkLogs delete policy" ON public.work_logs;
+
 CREATE POLICY "WorkLogs select policy" ON public.work_logs FOR SELECT
     USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "WorkLogs insert policy" ON public.work_logs FOR INSERT

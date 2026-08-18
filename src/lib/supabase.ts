@@ -1834,6 +1834,121 @@ export async function syncDeleteFile(
   return true;
 }
 
+export async function syncDownloadFile(file: {
+  name: string;
+  storageUrl?: string;
+  filePath?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabase();
+
+  // Strategy 1: If Supabase client exists and filePath is provided, download directly via Supabase Storage API
+  if (supabase && file.filePath && !file.filePath.startsWith('local/')) {
+    try {
+      const { data, error } = await supabase.storage.from('user_files').download(file.filePath);
+      if (!error && data) {
+        const blobUrl = window.URL.createObjectURL(data);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1500);
+        return { success: true };
+      }
+    } catch (err) {
+      console.warn('Supabase Storage SDK download failed, trying fallback:', err);
+    }
+  }
+
+  // Strategy 2: If storageUrl exists
+  if (file.storageUrl) {
+    // 2a. Blob or Data URL
+    if (file.storageUrl.startsWith('blob:') || file.storageUrl.startsWith('data:')) {
+      try {
+        const a = document.createElement('a');
+        a.href = file.storageUrl;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return { success: true };
+      } catch (err) {
+        console.warn('Blob/Data URL download failed:', err);
+      }
+    }
+
+    // 2b. Attempt fetch to Blob
+    try {
+      const res = await fetch(file.storageUrl, { mode: 'cors' });
+      if (res.ok) {
+        const blob = await res.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1500);
+        return { success: true };
+      }
+    } catch (fetchErr) {
+      console.warn('Direct fetch failed due to CORS or network:', fetchErr);
+    }
+
+    // 2c. Image canvas fallback for external images blocked by CORS fetch
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(ext || '')) {
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error('Image load failed'));
+          img.src = file.storageUrl!;
+        });
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width || 300;
+        canvas.height = img.naturalHeight || img.height || 300;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+          const dataUrl = canvas.toDataURL(mimeType);
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = file.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          return { success: true };
+        }
+      } catch (imgErr) {
+        console.warn('Canvas image conversion failed:', imgErr);
+      }
+    }
+
+    // 2d. Final Fallback: Direct Anchor trigger + window.open
+    try {
+      const a = document.createElement('a');
+      a.href = file.storageUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return { success: true };
+    } catch (fallbackErr) {
+      window.open(file.storageUrl, '_blank');
+      return { success: true };
+    }
+  }
+
+  return { success: false, error: 'No download source found for this file.' };
+}
+
 // -----------------------------------------------------------------------------
 // Clean SQL Schema & RLS Policies (For easy copy & execute in Supabase SQL editor)
 // -----------------------------------------------------------------------------

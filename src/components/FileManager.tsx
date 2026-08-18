@@ -30,6 +30,7 @@ import {
   Eye
 } from 'lucide-react';
 import { Folder, UserFile } from '../types';
+import { syncDownloadFile } from '../lib/supabase';
 
 interface FileManagerProps {
   folders: Folder[];
@@ -62,7 +63,15 @@ export const FileManager: React.FC<FileManagerProps> = ({
   const [uploadProgressText, setUploadProgressText] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [copiedFileId, setCopiedFileId] = useState<string | null>(null);
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: 'file' | 'folder';
+    id: string;
+    name: string;
+    filePath?: string;
+  } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -249,6 +258,47 @@ export const FileManager: React.FC<FileManagerProps> = ({
     setTimeout(() => setCopiedFileId(null), 2500);
   };
 
+  // Download File Handler
+  const handleDownloadFile = async (file: {
+    id?: string;
+    name: string;
+    storageUrl?: string;
+    filePath?: string;
+  }) => {
+    if (!file.storageUrl && !file.filePath) {
+      onShowToast('No download link available for this file', 'error');
+      return;
+    }
+
+    if (file.id) {
+      setDownloadingFileId(file.id);
+    }
+
+    onShowToast(`Downloading "${file.name}"...`, 'info');
+
+    try {
+      const res = await syncDownloadFile(file);
+      if (res.success) {
+        onShowToast(`Downloaded "${file.name}"`, 'success');
+      } else {
+        onShowToast(res.error || `Could not download "${file.name}"`, 'error');
+      }
+    } catch (err: any) {
+      console.error('File download failure:', err);
+      // Last-ditch emergency trigger: open in new tab
+      if (file.storageUrl) {
+        window.open(file.storageUrl, '_blank');
+        onShowToast(`Opened "${file.name}" in a new tab`, 'info');
+      } else {
+        onShowToast(`Download failed for "${file.name}"`, 'error');
+      }
+    } finally {
+      if (file.id) {
+        setDownloadingFileId(null);
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Header Card */}
@@ -271,19 +321,19 @@ export const FileManager: React.FC<FileManagerProps> = ({
 
         {/* Quick Stats & Storage Pill */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-850 dark:text-slate-300">
-            <HardDrive className="h-4 w-4 text-indigo-500" />
-            <span>{formatBytes(totalBytes)}</span>
-            <span className="text-slate-400">•</span>
-            <span>{files.length} files</span>
-            <span className="text-slate-400">•</span>
-            <span>{folders.length} folders</span>
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200/90 bg-slate-100/80 px-4 py-2.5 text-xs font-semibold text-slate-900 shadow-2xs dark:border-slate-700/80 dark:bg-slate-800 dark:text-slate-100">
+            <HardDrive className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+            <span className="font-bold text-slate-900 dark:text-white">{formatBytes(totalBytes)}</span>
+            <span className="text-slate-400 dark:text-slate-500">•</span>
+            <span className="text-slate-800 dark:text-slate-200">{files.length} files</span>
+            <span className="text-slate-400 dark:text-slate-500">•</span>
+            <span className="text-slate-800 dark:text-slate-200">{folders.length} folders</span>
           </div>
 
           <button
             id="btn-create-new-folder"
             onClick={() => setIsNewFolderOpen(true)}
-            className="flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-750"
+            className="flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-800 shadow-xs hover:border-slate-400 hover:bg-slate-50 transition active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700 dark:hover:border-slate-600"
           >
             <FolderPlus className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
             <span>New Folder</span>
@@ -293,7 +343,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
             id="btn-trigger-upload-files"
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/25 hover:bg-indigo-700 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/25 hover:bg-indigo-700 transition active:scale-95 disabled:opacity-50"
           >
             {isUploading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -327,7 +377,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
                   setCurrentFolderId(null);
                 }
               }}
-              className="mr-1 flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-750"
+              className="mr-1 flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
               title="Go back up"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -414,7 +464,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
         className={`group relative flex cursor-pointer flex-col items-center justify-center rounded-3xl border-2 border-dashed p-6 text-center transition-all ${
           isDragging
             ? 'border-indigo-600 bg-indigo-50/70 scale-[1.01] dark:border-indigo-400 dark:bg-indigo-950/40'
-            : 'border-slate-300/80 bg-white hover:border-indigo-400 hover:bg-slate-50/60 dark:border-slate-750 dark:bg-slate-900/60 dark:hover:border-indigo-500 dark:hover:bg-slate-850/60'
+            : 'border-slate-300/80 bg-white hover:border-indigo-400 hover:bg-slate-50/60 dark:border-slate-700 dark:bg-slate-900/60 dark:hover:border-indigo-500 dark:hover:bg-slate-800/60'
         }`}
       >
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 group-hover:scale-110 transition dark:bg-indigo-950/80 dark:text-indigo-400">
@@ -471,11 +521,14 @@ export const FileManager: React.FC<FileManagerProps> = ({
                   </div>
 
                   <button
+                    id={`btn-delete-folder-${folder.id}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (window.confirm(`Delete folder "${folder.name}" and all its contents?`)) {
-                        onDeleteFolder(folder.id);
-                      }
+                      setDeleteTarget({
+                        type: 'folder',
+                        id: folder.id,
+                        name: folder.name,
+                      });
                     }}
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 transition dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
                     title="Delete folder"
@@ -588,6 +641,20 @@ export const FileManager: React.FC<FileManagerProps> = ({
                       )}
 
                       <button
+                        id={`btn-download-file-grid-${file.id}`}
+                        onClick={() => handleDownloadFile(file)}
+                        disabled={downloadingFileId === file.id}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-indigo-400"
+                        title="Download file"
+                      >
+                        {downloadingFileId === file.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+
+                      <button
                         onClick={() => handleCopyLink(file)}
                         className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-indigo-400"
                         title="Copy public link"
@@ -601,12 +668,17 @@ export const FileManager: React.FC<FileManagerProps> = ({
                     </div>
 
                     <button
-                      onClick={() => {
-                        if (window.confirm(`Delete file "${file.name}"?`)) {
-                          onDeleteFile(file.id, file.filePath);
-                        }
+                      id={`btn-delete-file-grid-${file.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteTarget({
+                          type: 'file',
+                          id: file.id,
+                          name: file.name,
+                          filePath: file.filePath,
+                        });
                       }}
-                      className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
                       title="Delete file"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -673,6 +745,19 @@ export const FileManager: React.FC<FileManagerProps> = ({
                               </a>
                             )}
                             <button
+                              id={`btn-download-file-list-${file.id}`}
+                              onClick={() => handleDownloadFile(file)}
+                              disabled={downloadingFileId === file.id}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800"
+                              title="Download file"
+                            >
+                              {downloadingFileId === file.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" />
+                              ) : (
+                                <Download className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                            <button
                               onClick={() => handleCopyLink(file)}
                               className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:text-slate-400 dark:hover:bg-slate-800"
                               title="Copy URL"
@@ -684,12 +769,17 @@ export const FileManager: React.FC<FileManagerProps> = ({
                               )}
                             </button>
                             <button
-                              onClick={() => {
-                                if (window.confirm(`Delete file "${file.name}"?`)) {
-                                  onDeleteFile(file.id, file.filePath);
-                                }
+                              id={`btn-delete-file-list-${file.id}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget({
+                                  type: 'file',
+                                  id: file.id,
+                                  name: file.name,
+                                  filePath: file.filePath,
+                                });
                               }}
-                              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50"
+                              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition dark:hover:bg-rose-950/50"
                               title="Delete file"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -730,13 +820,14 @@ export const FileManager: React.FC<FileManagerProps> = ({
                   Folder Name
                 </label>
                 <input
+                  id="input-new-folder-name"
                   type="text"
                   required
                   autoFocus
                   placeholder="e.g. Design Assets, Invoices, Project Docs"
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-indigo-400 dark:focus:bg-slate-800"
                 />
               </div>
 
@@ -778,12 +869,22 @@ export const FileManager: React.FC<FileManagerProps> = ({
           >
             <div className="flex items-center justify-between px-3 py-2 text-xs text-slate-300">
               <span className="font-semibold truncate max-w-md">{previewImage.name}</span>
-              <button
-                onClick={() => setPreviewImage(null)}
-                className="rounded-lg bg-slate-800 px-2.5 py-1 text-xs font-bold hover:bg-slate-700 text-white"
-              >
-                Close (ESC)
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleDownloadFile({ name: previewImage.name, storageUrl: previewImage.url })}
+                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-bold text-white hover:bg-indigo-700 transition shadow-xs"
+                  title="Download image"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download</span>
+                </button>
+                <button
+                  onClick={() => setPreviewImage(null)}
+                  className="rounded-lg bg-slate-800 px-2.5 py-1 text-xs font-bold hover:bg-slate-700 text-white"
+                >
+                  Close (ESC)
+                </button>
+              </div>
             </div>
             <img
               src={previewImage.url}
@@ -791,6 +892,85 @@ export const FileManager: React.FC<FileManagerProps> = ({
               className="max-h-[75vh] w-auto max-w-full rounded-xl object-contain mx-auto"
               referrerPolicy="no-referrer"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => !isDeleting && setDeleteTarget(null)}
+        >
+          <div
+            className="relative w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+                <Trash2 className="h-6 w-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Delete {deleteTarget.type === 'folder' ? 'Folder' : 'File'}?
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  Are you sure you want to delete{' '}
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                    "{deleteTarget.name}"
+                  </span>
+                  ?{' '}
+                  {deleteTarget.type === 'folder'
+                    ? 'This will permanently delete this folder and all contents inside.'
+                    : 'This action cannot be undone and will permanently remove this file.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                id="btn-cancel-delete"
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                id="btn-confirm-delete"
+                type="button"
+                disabled={isDeleting}
+                onClick={async () => {
+                  setIsDeleting(true);
+                  try {
+                    if (deleteTarget.type === 'file') {
+                      await onDeleteFile(deleteTarget.id, deleteTarget.filePath || '');
+                    } else {
+                      await onDeleteFolder(deleteTarget.id);
+                    }
+                  } catch (err: any) {
+                    onShowToast(err?.message || 'Failed to delete item', 'error');
+                  } finally {
+                    setIsDeleting(false);
+                    setDeleteTarget(null);
+                  }
+                }}
+                className="flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-rose-600/20 transition hover:bg-rose-700 disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

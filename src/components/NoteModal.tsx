@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { X, Pin, Tag, Bell, Clock, Sparkles } from 'lucide-react';
+import { X, Pin, Tag, Bell, Clock, Sparkles, AlertCircle, Loader2 } from 'lucide-react';
 import { Note } from '../types';
 
 interface NoteModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (note: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>, id?: string) => void;
+  onSave: (
+    note: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>,
+    id?: string
+  ) => Promise<{ success: boolean; error?: string }> | void;
   initialNote?: Note | null;
 }
 
@@ -23,6 +26,8 @@ export const NoteModal: React.FC<NoteModalProps> = ({
   const [isPinned, setIsPinned] = useState(false);
   const [notifyAt, setNotifyAt] = useState<string>('');
   const [hasReminder, setHasReminder] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialNote) {
@@ -32,6 +37,7 @@ export const NoteModal: React.FC<NoteModalProps> = ({
       setCategory(initialNote.category || 'Engineering');
       setColorScheme(initialNote.colorScheme || 'default');
       setIsPinned(initialNote.isPinned || false);
+      setErrorMessage(null);
       if (initialNote.notifyAt) {
         // Convert to datetime-local format YYYY-MM-DDTHH:mm
         const dateObj = new Date(initialNote.notifyAt);
@@ -53,6 +59,7 @@ export const NoteModal: React.FC<NoteModalProps> = ({
       setIsPinned(false);
       setNotifyAt('');
       setHasReminder(false);
+      setErrorMessage(null);
     }
   }, [initialNote, isOpen]);
 
@@ -78,29 +85,43 @@ export const NoteModal: React.FC<NoteModalProps> = ({
     setHasReminder(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
+
+    setErrorMessage(null);
+    setIsSubmitting(true);
 
     const tags = tagsInput
       .split(',')
       .map((t) => t.trim().replace(/^#/, ''))
       .filter((t) => t.length > 0);
 
-    onSave(
-      {
-        title: title.trim(),
-        content: content.trim(),
-        tags,
-        category: category.trim() || 'General',
-        colorScheme,
-        isPinned,
-        notifyAt: hasReminder && notifyAt ? new Date(notifyAt).toISOString() : undefined,
-        notified: false,
-      },
-      initialNote ? initialNote.id : undefined
-    );
-    onClose();
+    const notePayload = {
+      title: title.trim(),
+      content: content.trim(),
+      tags,
+      category: category.trim() || 'General',
+      colorScheme,
+      isPinned,
+      notifyAt: hasReminder && notifyAt ? new Date(notifyAt).toISOString() : undefined,
+      notified: false,
+    };
+
+    try {
+      const result = await onSave(notePayload, initialNote ? initialNote.id : undefined);
+      if (result && typeof result === 'object' && result.success === false) {
+        // Keep inputs intact, display red error
+        setErrorMessage(result.error || 'Failed to save note.');
+        setIsSubmitting(false);
+        return;
+      }
+      setIsSubmitting(false);
+      onClose();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'An unexpected error occurred while saving.');
+      setIsSubmitting(false);
+    }
   };
 
   const colorOptions: { id: Note['colorScheme']; label: string; bg: string }[] = [
@@ -135,6 +156,13 @@ export const NoteModal: React.FC<NoteModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+          {errorMessage && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Note Title
@@ -315,9 +343,11 @@ export const NoteModal: React.FC<NoteModalProps> = ({
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-amber-500 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-amber-500/20 hover:bg-amber-600 active:scale-95 transition"
+              disabled={isSubmitting}
+              className="flex items-center gap-1.5 rounded-xl bg-amber-500 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-amber-500/20 hover:bg-amber-600 active:scale-95 transition disabled:opacity-50"
             >
-              {initialNote ? 'Save Changes' : 'Create Note'}
+              {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              <span>{initialNote ? 'Save Changes' : 'Create Note'}</span>
             </button>
           </div>
         </form>

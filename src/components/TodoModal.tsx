@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, CheckCircle, Tag, AlertCircle, Bell, Clock } from 'lucide-react';
+import { X, Calendar, CheckCircle, Tag, AlertCircle, Bell, Clock, Loader2 } from 'lucide-react';
 import { TodoTask, TaskStatus, TaskPriority } from '../types';
 
 interface TodoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (task: Omit<TodoTask, 'id' | 'createdAt'>, id?: string) => void;
+  onSave: (
+    task: Omit<TodoTask, 'id' | 'createdAt'>,
+    id?: string
+  ) => Promise<{ success: boolean; error?: string }> | void;
   initialTask?: TodoTask | null;
 }
 
@@ -23,6 +26,8 @@ export const TodoModal: React.FC<TodoModalProps> = ({
   const [category, setCategory] = useState('Engineering');
   const [notifyAt, setNotifyAt] = useState<string>('');
   const [hasReminder, setHasReminder] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialTask) {
@@ -32,6 +37,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({
       setPriority(initialTask.priority);
       setDueDate(initialTask.dueDate || '');
       setCategory(initialTask.category || 'Engineering');
+      setErrorMessage(null);
       if (initialTask.notifyAt) {
         const dateObj = new Date(initialTask.notifyAt);
         const localIso = new Date(dateObj.getTime() - dateObj.getTimezoneOffset() * 60000)
@@ -53,6 +59,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({
       setCategory('Engineering');
       setNotifyAt('');
       setHasReminder(false);
+      setErrorMessage(null);
     }
   }, [initialTask, isOpen]);
 
@@ -78,24 +85,37 @@ export const TodoModal: React.FC<TodoModalProps> = ({
     setHasReminder(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
 
-    onSave(
-      {
-        title: title.trim(),
-        description: description.trim() || undefined,
-        status,
-        priority,
-        dueDate: dueDate || new Date().toISOString().split('T')[0],
-        category: category.trim() || 'General',
-        notifyAt: hasReminder && notifyAt ? new Date(notifyAt).toISOString() : undefined,
-        notified: false,
-      },
-      initialTask ? initialTask.id : undefined
-    );
-    onClose();
+    setErrorMessage(null);
+    setIsSubmitting(true);
+
+    const taskPayload = {
+      title: title.trim(),
+      description: description.trim() || undefined,
+      status,
+      priority,
+      dueDate: dueDate || new Date().toISOString().split('T')[0],
+      category: category.trim() || 'General',
+      notifyAt: hasReminder && notifyAt ? new Date(notifyAt).toISOString() : undefined,
+      notified: false,
+    };
+
+    try {
+      const result = await onSave(taskPayload, initialTask ? initialTask.id : undefined);
+      if (result && typeof result === 'object' && result.success === false) {
+        setErrorMessage(result.error || 'Failed to save task.');
+        setIsSubmitting(false);
+        return;
+      }
+      setIsSubmitting(false);
+      onClose();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'An unexpected error occurred while saving.');
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -121,6 +141,12 @@ export const TodoModal: React.FC<TodoModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+          {errorMessage && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Task Title
@@ -299,9 +325,11 @@ export const TodoModal: React.FC<TodoModalProps> = ({
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/20 hover:bg-indigo-700 active:scale-95 transition"
+              disabled={isSubmitting}
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/20 hover:bg-indigo-700 active:scale-95 transition disabled:opacity-50"
             >
-              {initialTask ? 'Save Task' : 'Add Task'}
+              {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              <span>{initialTask ? 'Save Task' : 'Add Task'}</span>
             </button>
           </div>
         </form>

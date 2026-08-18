@@ -49,7 +49,13 @@ import {
   triggerNotificationAlert,
   hasNotificationPermission,
 } from './lib/notifications';
-import { Database, ShieldCheck, Sparkles, CheckCircle2, User, KeyRound, Volume2, Github, Crown, UserCheck } from 'lucide-react';
+import { Database, ShieldCheck, Sparkles, CheckCircle2, User, KeyRound, Volume2, Github, Crown, UserCheck, AlertCircle, X as CloseIcon } from 'lucide-react';
+
+interface AppToastMessage {
+  id: string;
+  type: 'success' | 'error' | 'info';
+  message: string;
+}
 
 export default function App() {
   // Theme state with localStorage sync
@@ -64,6 +70,17 @@ export default function App() {
       return false;
     }
   });
+
+  // Global App Action Toast notifications
+  const [appToasts, setAppToasts] = useState<AppToastMessage[]>([]);
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    setAppToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setAppToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
 
   // Apply theme class to <html> element
   useEffect(() => {
@@ -480,45 +497,55 @@ export default function App() {
   const handleSaveNote = async (
     noteData: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>,
     id?: string
-  ) => {
-    if (!currentUser) return;
-    const nowIso = new Date().toISOString();
-    let savedNote: Note;
-
-    if (id) {
-      savedNote = {
-        id,
-        ...noteData,
-        createdAt: notes.find((n) => n.id === id)?.createdAt || nowIso,
-        updatedAt: nowIso,
-      };
-      setNotes((prev) =>
-        prev.map((n) => (n.id === id ? savedNote : n))
-      );
-    } else {
-      savedNote = {
-        id: `note-${Date.now()}`,
-        ...noteData,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-      setNotes((prev) => [savedNote, ...prev]);
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) {
+      showToast('You must be signed in to save notes.', 'error');
+      return { success: false, error: 'User session not found' };
     }
 
-    await syncSaveNote(currentUser.id, savedNote);
+    const nowIso = new Date().toISOString();
+    const existing = id ? notes.find((n) => n.id === id) : null;
+    const noteToSave: Note = {
+      id: id || `note-${Date.now()}`,
+      ...noteData,
+      createdAt: existing?.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    const res = await syncSaveNote(currentUser.id, noteToSave);
+    if (res.error) {
+      showToast(`Failed to save Note: ${res.error}`, 'error');
+      return { success: false, error: res.error };
+    }
+
+    const finalNote = res.data || noteToSave;
+    // Optimistic State Persistence: directly update local React state with the returned Supabase row
+    setNotes((prev) => {
+      const idx = prev.findIndex((n) => n.id === finalNote.id || (id ? n.id === id : false));
+      if (idx !== -1) {
+        const copy = [...prev];
+        copy[idx] = finalNote;
+        return copy;
+      }
+      return [finalNote, ...prev];
+    });
+
+    showToast(id ? 'Note updated successfully' : 'Note created successfully', 'success');
+    return { success: true };
   };
 
   const handleDeleteNote = async (id: string) => {
     if (!currentUser) return;
     setNotes((prev) => prev.filter((n) => n.id !== id));
     await syncDeleteNote(currentUser.id, id);
+    showToast('Note deleted', 'info');
   };
 
   const handleTogglePin = async (id: string) => {
     if (!currentUser) return;
     const target = notes.find((n) => n.id === id);
     if (!target) return;
-    const updated = { ...target, isPinned: !target.isPinned };
+    const updated: Note = { ...target, isPinned: !target.isPinned };
     setNotes((prev) => prev.map((n) => (n.id === id ? updated : n)));
     await syncSaveNote(currentUser.id, updated);
   };
@@ -532,42 +559,53 @@ export default function App() {
   const handleSaveTask = async (
     taskData: Omit<TodoTask, 'id' | 'createdAt'>,
     id?: string
-  ) => {
-    if (!currentUser) return;
-    let savedTask: TodoTask;
-
-    if (id) {
-      savedTask = {
-        id,
-        ...taskData,
-        createdAt: tasks.find((t) => t.id === id)?.createdAt || new Date().toISOString(),
-      };
-      setTasks((prev) =>
-        prev.map((t) => (t.id === id ? savedTask : t))
-      );
-    } else {
-      savedTask = {
-        id: `todo-${Date.now()}`,
-        ...taskData,
-        createdAt: new Date().toISOString(),
-      };
-      setTasks((prev) => [savedTask, ...prev]);
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) {
+      showToast('You must be signed in to save tasks.', 'error');
+      return { success: false, error: 'User session not found' };
     }
 
-    await syncSaveTodo(currentUser.id, savedTask);
+    const nowIso = new Date().toISOString();
+    const existing = id ? tasks.find((t) => t.id === id) : null;
+    const taskToSave: TodoTask = {
+      id: id || `todo-${Date.now()}`,
+      ...taskData,
+      createdAt: existing?.createdAt || nowIso,
+    };
+
+    const res = await syncSaveTodo(currentUser.id, taskToSave);
+    if (res.error) {
+      showToast(`Failed to save Todo: ${res.error}`, 'error');
+      return { success: false, error: res.error };
+    }
+
+    const finalTask = res.data || taskToSave;
+    setTasks((prev) => {
+      const idx = prev.findIndex((t) => t.id === finalTask.id || (id ? t.id === id : false));
+      if (idx !== -1) {
+        const copy = [...prev];
+        copy[idx] = finalTask;
+        return copy;
+      }
+      return [finalTask, ...prev];
+    });
+
+    showToast(id ? 'Task updated successfully' : 'Task added successfully', 'success');
+    return { success: true };
   };
 
   const handleDeleteTask = async (id: string) => {
     if (!currentUser) return;
     setTasks((prev) => prev.filter((t) => t.id !== id));
     await syncDeleteTodo(currentUser.id, id);
+    showToast('Task deleted', 'info');
   };
 
   const handleToggleTaskStatus = async (id: string, newStatus: TaskStatus) => {
     if (!currentUser) return;
     const target = tasks.find((t) => t.id === id);
     if (!target) return;
-    const updated = { ...target, status: newStatus };
+    const updated: TodoTask = { ...target, status: newStatus };
     setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
     await syncSaveTodo(currentUser.id, updated);
   };
@@ -581,29 +619,39 @@ export default function App() {
   const handleSaveWorkLog = async (
     logData: Omit<WorkLog, 'id' | 'createdAt'>,
     id?: string
-  ) => {
-    if (!currentUser) return;
-    let savedLog: WorkLog;
-
-    if (id) {
-      savedLog = {
-        id,
-        ...logData,
-        createdAt: worklogs.find((l) => l.id === id)?.createdAt || new Date().toISOString(),
-      };
-      setWorklogs((prev) =>
-        prev.map((l) => (l.id === id ? savedLog : l))
-      );
-    } else {
-      savedLog = {
-        id: `worklog-${Date.now()}`,
-        ...logData,
-        createdAt: new Date().toISOString(),
-      };
-      setWorklogs((prev) => [savedLog, ...prev]);
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) {
+      showToast('You must be signed in to save work logs.', 'error');
+      return { success: false, error: 'User session not found' };
     }
 
-    await syncSaveWorkLog(currentUser.id, savedLog);
+    const nowIso = new Date().toISOString();
+    const existing = id ? worklogs.find((l) => l.id === id) : null;
+    const logToSave: WorkLog = {
+      id: id || `worklog-${Date.now()}`,
+      ...logData,
+      createdAt: existing?.createdAt || nowIso,
+    };
+
+    const res = await syncSaveWorkLog(currentUser.id, logToSave);
+    if (res.error) {
+      showToast(`Failed to save Work Log: ${res.error}`, 'error');
+      return { success: false, error: res.error };
+    }
+
+    const finalLog = res.data || logToSave;
+    setWorklogs((prev) => {
+      const idx = prev.findIndex((l) => l.id === finalLog.id || (id ? l.id === id : false));
+      if (idx !== -1) {
+        const copy = [...prev];
+        copy[idx] = finalLog;
+        return copy;
+      }
+      return [finalLog, ...prev];
+    });
+
+    showToast(id ? 'Work log updated successfully' : 'Time entry saved successfully', 'success');
+    return { success: true };
   };
 
   const handleDeleteWorkLog = async (id: string) => {
@@ -856,6 +904,41 @@ export default function App() {
         onSnooze={handleSnoozeAlert}
         onNavigateItem={handleNavigateAlertItem}
       />
+
+      {/* Global App Action Feedback Toasts (Save success, Errors, Network events) */}
+      {appToasts.length > 0 && (
+        <div className="fixed top-5 right-5 z-50 flex max-w-sm w-full flex-col gap-2 pointer-events-none">
+          {appToasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto flex items-center justify-between gap-3 rounded-2xl p-4 shadow-xl backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-top-4 ${
+                toast.type === 'error'
+                  ? 'border border-rose-200 bg-rose-50/95 text-rose-900 dark:border-rose-800 dark:bg-rose-950/95 dark:text-rose-200'
+                  : toast.type === 'success'
+                  ? 'border border-emerald-200 bg-emerald-50/95 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/95 dark:text-emerald-200'
+                  : 'border border-slate-200 bg-white/95 text-slate-800 dark:border-slate-800 dark:bg-slate-900/95 dark:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                {toast.type === 'error' ? (
+                  <AlertCircle className="h-5 w-5 shrink-0 text-rose-600 dark:text-rose-400" />
+                ) : toast.type === 'success' ? (
+                  <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <Sparkles className="h-5 w-5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                )}
+                <span className="text-xs font-semibold">{toast.message}</span>
+              </div>
+              <button
+                onClick={() => setAppToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+                className="rounded-lg p-1 text-slate-400 hover:bg-black/5 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* User Role Management Modal (RBAC) */}
       <UserRoleManagementModal

@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { X, Clock, Briefcase, Calendar } from 'lucide-react';
+import { X, Clock, Briefcase, Calendar, AlertCircle, Loader2 } from 'lucide-react';
 import { WorkLog } from '../types';
 
 interface WorkLogModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (log: Omit<WorkLog, 'id' | 'createdAt'>, id?: string) => void;
+  onSave: (
+    log: Omit<WorkLog, 'id' | 'createdAt'>,
+    id?: string
+  ) => Promise<{ success: boolean; error?: string }> | void;
   initialLog?: WorkLog | null;
   prefilledHours?: number;
 }
@@ -24,6 +27,8 @@ export const WorkLogModal: React.FC<WorkLogModalProps> = ({
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [category, setCategory] = useState('Development');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialLog) {
@@ -34,6 +39,7 @@ export const WorkLogModal: React.FC<WorkLogModalProps> = ({
       setStartTime(initialLog.startTime || '');
       setEndTime(initialLog.endTime || '');
       setCategory(initialLog.category || 'Development');
+      setErrorMessage(null);
     } else {
       setProjectName('WorkSpace Core App');
       setTaskDescription('');
@@ -43,28 +49,42 @@ export const WorkLogModal: React.FC<WorkLogModalProps> = ({
       setStartTime('');
       setEndTime('');
       setCategory('Development');
+      setErrorMessage(null);
     }
   }, [initialLog, prefilledHours, isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!projectName.trim() || !taskDescription.trim()) return;
 
-    onSave(
-      {
-        projectName: projectName.trim(),
-        taskDescription: taskDescription.trim(),
-        hoursSpent: Number(hoursSpent) || 0.5,
-        date: date || new Date().toISOString().split('T')[0],
-        startTime: startTime.trim() || undefined,
-        endTime: endTime.trim() || undefined,
-        category: category.trim() || 'General',
-      },
-      initialLog ? initialLog.id : undefined
-    );
-    onClose();
+    setErrorMessage(null);
+    setIsSubmitting(true);
+
+    const logPayload = {
+      projectName: projectName.trim(),
+      taskDescription: taskDescription.trim(),
+      hoursSpent: Number(hoursSpent) || 0.5,
+      date: date || new Date().toISOString().split('T')[0],
+      startTime: startTime.trim() || undefined,
+      endTime: endTime.trim() || undefined,
+      category: category.trim() || 'General',
+    };
+
+    try {
+      const result = await onSave(logPayload, initialLog ? initialLog.id : undefined);
+      if (result && typeof result === 'object' && result.success === false) {
+        setErrorMessage(result.error || 'Failed to save work log.');
+        setIsSubmitting(false);
+        return;
+      }
+      setIsSubmitting(false);
+      onClose();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'An unexpected error occurred while saving.');
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -90,6 +110,13 @@ export const WorkLogModal: React.FC<WorkLogModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          {errorMessage && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Project Name
@@ -200,9 +227,11 @@ export const WorkLogModal: React.FC<WorkLogModalProps> = ({
             </button>
             <button
               type="submit"
-              className="rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-emerald-600/20 hover:bg-emerald-700 active:scale-95 transition"
+              disabled={isSubmitting}
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-emerald-600/20 hover:bg-emerald-700 active:scale-95 transition disabled:opacity-50"
             >
-              {initialLog ? 'Save Work Log' : 'Save Time Entry'}
+              {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              <span>{initialLog ? 'Save Work Log' : 'Save Time Entry'}</span>
             </button>
           </div>
         </form>

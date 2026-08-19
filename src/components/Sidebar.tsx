@@ -18,7 +18,8 @@ import {
   UserCheck,
   Volume2,
   FileDown,
-  Crown
+  Crown,
+  LogOut
 } from 'lucide-react';
 import { NavSection, MetricStats, UserSession } from '../types';
 import { getStoredSupabaseConfig } from '../lib/supabase';
@@ -39,6 +40,7 @@ interface SidebarProps {
   onOpenDeployGuideModal: () => void;
   onOpenExportModal: (initialType?: 'all' | 'tasks' | 'worklogs' | 'notes') => void;
   onOpenUserRolesModal?: () => void;
+  onSignOut?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -57,6 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenDeployGuideModal,
   onOpenExportModal,
   onOpenUserRolesModal,
+  onSignOut,
 }) => {
   const { isConfigured } = getStoredSupabaseConfig();
 
@@ -298,6 +301,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
             />
           </div>
         </div>
+
+        {/* Sign Out Button */}
+        {onSignOut && (
+          <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800">
+            <button
+              id="btn-sidebar-signout"
+              onClick={() => {
+                if (isOpenMobile) onCloseMobile();
+                onSignOut();
+              }}
+              className="flex w-full items-center justify-between rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-100 hover:text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-900/50 dark:hover:text-rose-300 shadow-2xs"
+            >
+              <span className="flex items-center gap-2">
+                <LogOut className="h-4 w-4 text-rose-500 dark:text-rose-400" />
+                <span>Sign Out</span>
+              </span>
+              {currentUser?.email && (
+                <span className="max-w-[100px] truncate text-[10px] font-normal text-rose-400 dark:text-rose-400/70">
+                  {currentUser.email}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
     </div>

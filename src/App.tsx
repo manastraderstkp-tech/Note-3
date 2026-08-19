@@ -821,6 +821,7 @@ export default function App() {
         onOpenDeployGuideModal={() => setIsDeployGuideOpen(true)}
         onOpenExportModal={handleOpenExportModal}
         onOpenUserRolesModal={() => setIsUserRolesModalOpen(true)}
+        onSignOut={handleSignOut}
       />
 
       {/* Main Layout Area */}

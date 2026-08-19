@@ -19,7 +19,8 @@ import {
   Volume2,
   FileDown,
   Crown,
-  LogOut
+  LogOut,
+  Trash2
 } from 'lucide-react';
 import { NavSection, MetricStats, UserSession } from '../types';
 import { getStoredSupabaseConfig } from '../lib/supabase';
@@ -108,6 +109,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: TrendingUp,
       badge: null,
       color: 'text-indigo-500',
+    },
+    {
+      id: 'trash' as NavSection,
+      label: 'Trash',
+      icon: Trash2,
+      badge: null,
+      color: 'text-slate-500',
     },
   ];
 

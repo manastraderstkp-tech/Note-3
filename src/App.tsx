@@ -23,8 +23,9 @@ import { UserRoleManagementModal } from './components/UserRoleManagementModal';
 import { PersonalSpaceView } from './components/PersonalSpaceView';
 import { FileManager } from './components/FileManager';
 import { ShareMarketView } from './components/ShareMarketView';
+import { TrashSection } from './components/TrashSection';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
-import { Note, TodoTask, WorkLog, Folder, UserFile, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole } from './types';
+import { Note, TodoTask, WorkLog, Folder, UserFile, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole, TrashItem, TrashItemType } from './types';
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from './data/initialData';
 import {
   getCurrentStoredUser,
@@ -125,6 +126,27 @@ export default function App() {
   const [worklogs, setWorklogs] = useState<WorkLog[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [files, setFiles] = useState<UserFile[]>([]);
+
+  // Trash State
+  const [trashItems, setTrashItems] = useState<TrashItem[]>(() => {
+    try {
+      const raw = localStorage.getItem('ws_trash_items');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('ws_trash_items', JSON.stringify(trashItems));
+  }, [trashItems]);
+
+  // Active filters (hide trashed items)
+  const activeNotes = notes.filter(n => !trashItems.some(t => t.originalId === n.id));
+  const activeTasks = tasks.filter(task => !trashItems.some(t => t.originalId === task.id));
+  const activeWorklogs = worklogs.filter(w => !trashItems.some(t => t.originalId === w.id));
+  const activeFolders = folders.filter(f => !trashItems.some(t => t.originalId === f.id));
+  const activeFiles = files.filter(f => !trashItems.some(t => t.originalId === f.id));
 
   // Active Reminder In-App Toasts
   const [activeAlerts, setActiveAlerts] = useState<ActiveReminderAlert[]>([]);
@@ -449,16 +471,16 @@ export default function App() {
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   const stats: MetricStats = useMemo(() => {
-    const totalNotes = notes.length;
-    const pendingTasks = tasks.filter((t) => t.status === 'pending').length;
-    const inProgressTasks = tasks.filter((t) => t.status === 'in_progress').length;
-    const completedTasks = tasks.filter((t) => t.status === 'completed').length;
+    const totalNotes = activeNotes.length;
+    const pendingTasks = activeTasks.filter((t) => t.status === 'pending').length;
+    const inProgressTasks = activeTasks.filter((t) => t.status === 'in_progress').length;
+    const completedTasks = activeTasks.filter((t) => t.status === 'completed').length;
 
-    const hoursLoggedToday = worklogs
+    const hoursLoggedToday = activeWorklogs
       .filter((l) => l.date === todayStr)
       .reduce((acc, curr) => acc + curr.hoursSpent, 0);
 
-    const totalHoursWeek = worklogs.reduce((acc, curr) => acc + curr.hoursSpent, 0);
+    const totalHoursWeek = activeWorklogs.reduce((acc, curr) => acc + curr.hoursSpent, 0);
 
     return {
       totalNotes,
@@ -468,16 +490,16 @@ export default function App() {
       hoursLoggedToday,
       totalHoursWeek,
     };
-  }, [notes, tasks, worklogs, todayStr]);
+  }, [activeNotes, activeTasks, activeWorklogs, todayStr]);
 
   // Unique categories aggregated across all entities
   const availableCategories = useMemo(() => {
     const cats = new Set<string>();
-    notes.forEach((n) => n.category && cats.add(n.category));
-    tasks.forEach((t) => t.category && cats.add(t.category));
-    worklogs.forEach((w) => w.category && cats.add(w.category));
+    activeNotes.forEach((n) => n.category && cats.add(n.category));
+    activeTasks.forEach((t) => t.category && cats.add(t.category));
+    activeWorklogs.forEach((w) => w.category && cats.add(w.category));
     return Array.from(cats);
-  }, [notes, tasks, worklogs]);
+  }, [activeNotes, activeTasks, activeWorklogs]);
 
   // Handler for "+ Create" quick-launcher
   const handleOpenNewModal = (type: 'note' | 'todo' | 'worklog') => {
@@ -556,11 +578,25 @@ export default function App() {
     return { success: true };
   };
 
+  const handleMoveToTrash = (originalId: string, type: TrashItemType, title: string, data: any) => {
+    const item: TrashItem = {
+      id: `trash-${Date.now()}-${Math.random().toString(36).substring(2,6)}`,
+      originalId,
+      type,
+      title,
+      deletedAt: new Date().toISOString(),
+      data,
+    };
+    setTrashItems(prev => [item, ...prev]);
+  };
+
   const handleDeleteNote = async (id: string) => {
     if (!currentUser) return;
-    setNotes((prev) => prev.filter((n) => n.id !== id));
-    await syncDeleteNote(currentUser.id, id);
-    showToast('Note deleted', 'info');
+    const note = notes.find(n => n.id === id);
+    if (note) {
+      handleMoveToTrash(id, 'note', note.title, note);
+      showToast('Note moved to trash', 'info');
+    }
   };
 
   const handleTogglePin = async (id: string) => {
@@ -618,9 +654,11 @@ export default function App() {
 
   const handleDeleteTask = async (id: string) => {
     if (!currentUser) return;
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-    await syncDeleteTodo(currentUser.id, id);
-    showToast('Task deleted', 'info');
+    const task = tasks.find(t => t.id === id);
+    if (task) {
+      handleMoveToTrash(id, 'todo', task.title, task);
+      showToast('Task moved to trash', 'info');
+    }
   };
 
   const handleToggleTaskStatus = async (id: string, newStatus: TaskStatus) => {
@@ -678,8 +716,11 @@ export default function App() {
 
   const handleDeleteWorkLog = async (id: string) => {
     if (!currentUser) return;
-    setWorklogs((prev) => prev.filter((l) => l.id !== id));
-    await syncDeleteWorkLog(currentUser.id, id);
+    const log = worklogs.find(w => w.id === id);
+    if (log) {
+      handleMoveToTrash(id, 'worklog', log.taskDescription, log);
+      showToast('Work log moved to trash', 'info');
+    }
   };
 
   const handleEditWorkLog = (log: WorkLog) => {
@@ -717,10 +758,14 @@ export default function App() {
 
   const handleDeleteFolder = async (folderId: string) => {
     if (!currentUser) return;
-    setFolders((prev) => prev.filter((f) => f.id !== folderId));
-    setFiles((prev) => prev.filter((f) => f.folderId !== folderId));
-    await syncDeleteFolder(currentUser.id, folderId);
-    showToast('Folder deleted', 'info');
+    const folder = folders.find(f => f.id === folderId);
+    if (folder) {
+      handleMoveToTrash(folderId, 'folder', folder.name, folder);
+      // Also move child files to trash
+      const childFiles = files.filter(f => f.folderId === folderId);
+      childFiles.forEach(f => handleMoveToTrash(f.id, 'file', f.name, f));
+      showToast('Folder and its files moved to trash', 'info');
+    }
   };
 
   const handleUploadFile = async (
@@ -745,9 +790,63 @@ export default function App() {
 
   const handleDeleteFile = async (fileId: string, filePath: string) => {
     if (!currentUser) return;
-    setFiles((prev) => prev.filter((f) => f.id !== fileId));
-    await syncDeleteFile(currentUser.id, fileId, filePath);
-    showToast('File deleted', 'info');
+    const file = files.find(f => f.id === fileId);
+    if (file) {
+      handleMoveToTrash(fileId, 'file', file.name, file);
+      showToast('File moved to trash', 'info');
+    }
+  };
+
+  const handleRestoreItem = (item: TrashItem) => {
+    setTrashItems(prev => prev.filter(t => t.id !== item.id));
+    showToast(`${item.title} restored`, 'success');
+  };
+
+  const handlePermanentDelete = async (item: TrashItem) => {
+    if (!currentUser) return;
+    
+    // Remove from active arrays permanently
+    if (item.type === 'note') setNotes(prev => prev.filter(n => n.id !== item.originalId));
+    if (item.type === 'todo') setTasks(prev => prev.filter(t => t.id !== item.originalId));
+    if (item.type === 'worklog') setWorklogs(prev => prev.filter(w => w.id !== item.originalId));
+    if (item.type === 'folder') setFolders(prev => prev.filter(f => f.id !== item.originalId));
+    if (item.type === 'file') setFiles(prev => prev.filter(f => f.id !== item.originalId));
+
+    // Delete from Supabase permanently
+    if (item.type === 'note') await syncDeleteNote(currentUser.id, item.originalId);
+    if (item.type === 'todo') await syncDeleteTodo(currentUser.id, item.originalId);
+    if (item.type === 'worklog') await syncDeleteWorkLog(currentUser.id, item.originalId);
+    if (item.type === 'folder') await syncDeleteFolder(currentUser.id, item.originalId);
+    if (item.type === 'file') {
+      const fileData = item.data as UserFile;
+      if (fileData) await syncDeleteFile(currentUser.id, item.originalId, fileData.filePath);
+    }
+
+    setTrashItems(prev => prev.filter(t => t.id !== item.id));
+    showToast('Item permanently deleted', 'info');
+  };
+
+  const handleEmptyTrash = async () => {
+    if (!currentUser) return;
+    // Permanently delete all items
+    for (const item of trashItems) {
+      if (item.type === 'note') setNotes(prev => prev.filter(n => n.id !== item.originalId));
+      if (item.type === 'todo') setTasks(prev => prev.filter(t => t.id !== item.originalId));
+      if (item.type === 'worklog') setWorklogs(prev => prev.filter(w => w.id !== item.originalId));
+      if (item.type === 'folder') setFolders(prev => prev.filter(f => f.id !== item.originalId));
+      if (item.type === 'file') setFiles(prev => prev.filter(f => f.id !== item.originalId));
+
+      if (item.type === 'note') await syncDeleteNote(currentUser.id, item.originalId);
+      if (item.type === 'todo') await syncDeleteTodo(currentUser.id, item.originalId);
+      if (item.type === 'worklog') await syncDeleteWorkLog(currentUser.id, item.originalId);
+      if (item.type === 'folder') await syncDeleteFolder(currentUser.id, item.originalId);
+      if (item.type === 'file') {
+        const fileData = item.data as UserFile;
+        if (fileData) await syncDeleteFile(currentUser.id, item.originalId, fileData.filePath);
+      }
+    }
+    setTrashItems([]);
+    showToast('Trash emptied completely', 'success');
   };
 
   // Reset sample data
@@ -892,9 +991,9 @@ export default function App() {
               currentUser?.role === 'admin' ? (
                 <DashboardView
                   stats={stats}
-                  notes={notes}
-                  tasks={tasks}
-                  worklogs={worklogs}
+                  notes={activeNotes}
+                  tasks={activeTasks}
+                  worklogs={activeWorklogs}
                   onNavigate={(sec) => {
                     setActiveSection(sec);
                     setSearchQuery('');
@@ -911,9 +1010,9 @@ export default function App() {
               ) : (
                 <PersonalSpaceView
                   currentUser={currentUser}
-                  notes={notes}
-                  tasks={tasks}
-                  worklogs={worklogs}
+                  notes={activeNotes}
+                  tasks={activeTasks}
+                  worklogs={activeWorklogs}
                   onNavigate={(sec) => {
                     setActiveSection(sec);
                     setSearchQuery('');
@@ -931,7 +1030,7 @@ export default function App() {
 
             {activeSection === 'notes' && (
               <NotesSection
-                notes={notes}
+                notes={activeNotes}
                 onAddNote={() => {
                   setEditingNote(null);
                   setIsNoteModalOpen(true);
@@ -947,7 +1046,7 @@ export default function App() {
 
             {activeSection === 'todos' && (
               <TodoSection
-                tasks={tasks}
+                tasks={activeTasks}
                 onAddTask={() => {
                   setEditingTask(null);
                   setIsTodoModalOpen(true);
@@ -963,7 +1062,7 @@ export default function App() {
 
             {activeSection === 'worklogs' && (
               <WorkLogSection
-                logs={worklogs}
+                logs={activeWorklogs}
                 onAddLog={handleAddWorkLogWithHours}
                 onEditLog={handleEditWorkLog}
                 onDeleteLog={handleDeleteWorkLog}
@@ -975,8 +1074,8 @@ export default function App() {
 
             {activeSection === 'files' && (
               <FileManager
-                folders={folders}
-                files={files}
+                folders={activeFolders}
+                files={activeFiles}
                 onCreateFolder={handleCreateFolder}
                 onDeleteFolder={handleDeleteFolder}
                 onUploadFile={handleUploadFile}
@@ -990,6 +1089,15 @@ export default function App() {
               <ShareMarketView
                 userId={currentUser?.id || 'demo-user'}
                 onShowToast={showToast}
+              />
+            )}
+
+            {activeSection === 'trash' && (
+              <TrashSection
+                trashItems={trashItems}
+                onRestore={handleRestoreItem}
+                onPermanentDelete={handlePermanentDelete}
+                onEmptyTrash={handleEmptyTrash}
               />
             )}
           </div>

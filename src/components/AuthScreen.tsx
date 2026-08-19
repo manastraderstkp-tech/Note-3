@@ -556,7 +556,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     <GoogleIcon className="h-4 w-4 shrink-0" />
                   )}
                   <span className="truncate">
-                    {googleLoading ? 'Google...' : 'Google'}
+                    {googleLoading ? 'Connecting...' : 'Continue with Google'}
                   </span>
                 </button>
 
@@ -574,7 +574,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     <GitHubIcon className="h-4 w-4 shrink-0" />
                   )}
                   <span className="truncate">
-                    {gitHubLoading ? 'GitHub...' : 'GitHub'}
+                    {gitHubLoading ? 'Connecting...' : 'Continue with GitHub'}
                   </span>
                 </button>
               </div>

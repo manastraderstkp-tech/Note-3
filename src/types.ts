@@ -1,4 +1,4 @@
-export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket';
+export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket' | 'trash';
 
 export type UserRole = 'admin' | 'user';
 
@@ -64,6 +64,8 @@ export interface Note {
   notified?: boolean;
   createdAt: string;
   updatedAt: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface TodoTask {
@@ -77,6 +79,8 @@ export interface TodoTask {
   notified?: boolean;
   category: string;
   createdAt: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface WorkLog {
@@ -89,6 +93,8 @@ export interface WorkLog {
   endTime?: string; // e.g. "12:00 PM"
   category: string;
   createdAt: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface Folder {
@@ -98,6 +104,8 @@ export interface Folder {
   parentId?: string | null;
   createdAt: string;
   updatedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface UserFile {
@@ -110,6 +118,8 @@ export interface UserFile {
   fileSize: number; // in bytes
   storageUrl: string;
   createdAt: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface MetricStats {
@@ -156,5 +166,16 @@ export interface ShareMarketState {
   portfolio: StockHoldings[];
   trades: TradeLog[];
   watchlist: string[];
+}
+
+export type TrashItemType = 'note' | 'todo' | 'worklog' | 'file' | 'folder';
+
+export interface TrashItem {
+  id: string;
+  originalId: string;
+  type: TrashItemType;
+  title: string; // Used for display in the trash list
+  deletedAt: string;
+  data: any; // The original serialized object
 }
 

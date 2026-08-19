@@ -17,12 +17,13 @@ import {
   FileDown
 } from 'lucide-react';
 import { WorkLog } from '../types';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface WorkLogSectionProps {
   logs: WorkLog[];
   onAddLog: (prefilledHours?: number) => void;
   onEditLog: (log: WorkLog) => void;
-  onDeleteLog: (id: string) => void;
+  onDeleteLog: (id: string) => Promise<void> | void;
   searchQuery: string;
   selectedCategory: string | null;
   onOpenExportModal?: (initialType?: 'all' | 'tasks' | 'worklogs' | 'notes') => void;
@@ -42,6 +43,7 @@ export const WorkLogSection: React.FC<WorkLogSectionProps> = ({
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [timerProject, setTimerProject] = useState('WorkSpace Core App');
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string | null>(null);
+  const [deleteModalState, setDeleteModalState] = useState<{ isOpen: boolean; id: string; name: string }>({ isOpen: false, id: '', name: '' });
 
   // Timer interval effect
   useEffect(() => {
@@ -328,7 +330,7 @@ export const WorkLogSection: React.FC<WorkLogSectionProps> = ({
                         <Edit3 className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => onDeleteLog(log.id)}
+                        onClick={() => setDeleteModalState({ isOpen: true, id: log.id, name: log.taskDescription || 'Untitled Log' })}
                         className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
                         title="Delete log entry"
                       >
@@ -354,6 +356,15 @@ export const WorkLogSection: React.FC<WorkLogSectionProps> = ({
           </p>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        isOpen={deleteModalState.isOpen}
+        onClose={() => setDeleteModalState({ ...deleteModalState, isOpen: false })}
+        onConfirm={async () => {
+          await onDeleteLog(deleteModalState.id);
+        }}
+        itemName={deleteModalState.name}
+      />
     </div>
   );
 };

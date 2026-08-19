@@ -33,7 +33,7 @@ export const NotificationToastContainer: React.FC<NotificationToastContainerProp
           <div
             key={alert.id}
             id={`reminder-toast-${alert.id}`}
-            className="pointer-events-auto overflow-hidden rounded-2xl border border-indigo-200/90 bg-white/95 p-4 shadow-2xl backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-5 dark:border-indigo-800/80 dark:bg-slate-900/95"
+            className="pointer-events-auto relative overflow-hidden rounded-2xl border border-indigo-200/90 bg-white/95 p-4 shadow-2xl backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-5 dark:border-indigo-800/80 dark:bg-slate-900/95"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-2.5">
@@ -83,15 +83,19 @@ export const NotificationToastContainer: React.FC<NotificationToastContainerProp
                 <span>Scheduled for {new Date(alert.scheduledTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 pointer-events-auto relative z-10">
                 <button
-                  onClick={() => onSnooze(alert, 5)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSnooze(alert, 5);
+                  }}
                   className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
                   Snooze 5m
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     onDismiss(alert.id);
                     onNavigateItem(isTodo ? 'todos' : 'notes', alert.itemId);
                   }}

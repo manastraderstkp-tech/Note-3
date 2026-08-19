@@ -16,12 +16,13 @@ import {
   FileDown
 } from 'lucide-react';
 import { TodoTask, TaskStatus, TaskPriority } from '../types';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface TodoSectionProps {
   tasks: TodoTask[];
   onAddTask: () => void;
   onEditTask: (task: TodoTask) => void;
-  onDeleteTask: (id: string) => void;
+  onDeleteTask: (id: string) => Promise<void> | void;
   onToggleStatus: (id: string, newStatus: TaskStatus) => void;
   searchQuery: string;
   selectedCategory: string | null;
@@ -40,6 +41,7 @@ export const TodoSection: React.FC<TodoSectionProps> = ({
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | TaskStatus>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TaskPriority>('all');
+  const [deleteModalState, setDeleteModalState] = useState<{ isOpen: boolean; id: string; name: string }>({ isOpen: false, id: '', name: '' });
 
   // Filter tasks
   const filteredTasks = tasks.filter((task) => {
@@ -308,7 +310,7 @@ export const TodoSection: React.FC<TodoSectionProps> = ({
                     <Edit3 className="h-3.5 w-3.5" />
                   </button>
                   <button
-                    onClick={() => onDeleteTask(task.id)}
+                    onClick={() => setDeleteModalState({ isOpen: true, id: task.id, name: task.title || 'Untitled Task' })}
                     className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
                     title="Delete task"
                   >
@@ -332,6 +334,15 @@ export const TodoSection: React.FC<TodoSectionProps> = ({
           </p>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        isOpen={deleteModalState.isOpen}
+        onClose={() => setDeleteModalState({ ...deleteModalState, isOpen: false })}
+        onConfirm={async () => {
+          await onDeleteTask(deleteModalState.id);
+        }}
+        itemName={deleteModalState.name}
+      />
     </div>
   );
 };

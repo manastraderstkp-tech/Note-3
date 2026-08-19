@@ -1389,14 +1389,30 @@ export const ShareMarketView: React.FC<ShareMarketViewProps> = ({ userId, onShow
 
               <div>
                 <label className="block mb-1">Total Dividends Received (Rs.)</label>
-                <input
-                  type="number"
-                  step="any"
-                  placeholder="e.g. 1500"
-                  value={pfDividends}
-                  onChange={(e) => setPfDividends(Number(e.target.value))}
-                  className="w-full rounded-xl border border-slate-200 p-2.5 text-sm font-semibold outline-none focus:border-indigo-500 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
-                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPfDividends(prev => Math.max(0, prev - 100))}
+                    className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-100 dark:border-slate-800 dark:hover:bg-slate-800"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    step="100"
+                    placeholder="e.g. 1500"
+                    value={pfDividends}
+                    onChange={(e) => setPfDividends(Number(e.target.value))}
+                    className="w-full flex-1 rounded-xl border border-slate-200 p-2.5 text-center text-sm font-semibold outline-none focus:border-indigo-500 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPfDividends(prev => prev + 100)}
+                    className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-100 dark:border-slate-800 dark:hover:bg-slate-800"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
 
               <div className="flex gap-3 pt-4">

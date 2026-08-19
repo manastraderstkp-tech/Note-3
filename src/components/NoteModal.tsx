@@ -225,7 +225,7 @@ export const NoteModal: React.FC<NoteModalProps> = ({
     const newAttachments = [...attachments];
     let hasError = false;
 
-    Array.from(files).forEach(file => {
+    Array.from(files).forEach((file: File) => {
       if (file.size > 5 * 1024 * 1024) {
         hasError = true;
         return;

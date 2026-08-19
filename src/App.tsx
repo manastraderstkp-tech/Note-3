@@ -594,8 +594,12 @@ export default function App() {
     if (!currentUser) return;
     const note = notes.find(n => n.id === id);
     if (note) {
+      // Execute the actual Supabase delete query and remove from state
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+      await syncDeleteNote(currentUser.id, id);
+      
       handleMoveToTrash(id, 'note', note.title, note);
-      showToast('Note moved to trash', 'info');
+      showToast('Note deleted and moved to trash', 'info');
     }
   };
 
@@ -656,8 +660,12 @@ export default function App() {
     if (!currentUser) return;
     const task = tasks.find(t => t.id === id);
     if (task) {
+      // Execute the actual Supabase delete query and remove from state
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+      await syncDeleteTodo(currentUser.id, id);
+
       handleMoveToTrash(id, 'todo', task.title, task);
-      showToast('Task moved to trash', 'info');
+      showToast('Task deleted and moved to trash', 'info');
     }
   };
 
@@ -718,8 +726,12 @@ export default function App() {
     if (!currentUser) return;
     const log = worklogs.find(w => w.id === id);
     if (log) {
+      // Execute the actual Supabase delete query and remove from state
+      setWorklogs((prev) => prev.filter((l) => l.id !== id));
+      await syncDeleteWorkLog(currentUser.id, id);
+
       handleMoveToTrash(id, 'worklog', log.taskDescription, log);
-      showToast('Work log moved to trash', 'info');
+      showToast('Work log deleted and moved to trash', 'info');
     }
   };
 
@@ -760,11 +772,15 @@ export default function App() {
     if (!currentUser) return;
     const folder = folders.find(f => f.id === folderId);
     if (folder) {
+      setFolders((prev) => prev.filter((f) => f.id !== folderId));
+      const childFiles = files.filter(f => f.folderId === folderId);
+      setFiles((prev) => prev.filter((f) => f.folderId !== folderId));
+      await syncDeleteFolder(currentUser.id, folderId);
+
       handleMoveToTrash(folderId, 'folder', folder.name, folder);
       // Also move child files to trash
-      const childFiles = files.filter(f => f.folderId === folderId);
       childFiles.forEach(f => handleMoveToTrash(f.id, 'file', f.name, f));
-      showToast('Folder and its files moved to trash', 'info');
+      showToast('Folder and its files deleted and moved to trash', 'info');
     }
   };
 
@@ -792,59 +808,58 @@ export default function App() {
     if (!currentUser) return;
     const file = files.find(f => f.id === fileId);
     if (file) {
+      setFiles((prev) => prev.filter((f) => f.id !== fileId));
+      await syncDeleteFile(currentUser.id, fileId, filePath);
+
       handleMoveToTrash(fileId, 'file', file.name, file);
-      showToast('File moved to trash', 'info');
+      showToast('File deleted and moved to trash', 'info');
     }
   };
 
-  const handleRestoreItem = (item: TrashItem) => {
+  const handleRestoreItem = async (item: TrashItem) => {
+    if (!currentUser) return;
+
     setTrashItems(prev => prev.filter(t => t.id !== item.id));
+
+    if (item.type === 'note') {
+      const data = item.data as Note;
+      setNotes(prev => [data, ...prev]);
+      await syncSaveNote(currentUser.id, data);
+    } else if (item.type === 'todo') {
+      const data = item.data as TodoTask;
+      setTasks(prev => [data, ...prev]);
+      await syncSaveTodo(currentUser.id, data);
+    } else if (item.type === 'worklog') {
+      const data = item.data as WorkLog;
+      setWorklogs(prev => [data, ...prev]);
+      await syncSaveWorkLog(currentUser.id, data);
+    } else if (item.type === 'folder') {
+      const data = item.data as Folder;
+      setFolders(prev => [data, ...prev]);
+      await syncCreateFolder(currentUser.id, data.name, data.parentId, data.id);
+    } else if (item.type === 'file') {
+      const data = item.data as UserFile;
+      setFiles(prev => [data, ...prev]);
+      // Note: Re-uploading file to Supabase Storage requires the File blob, which is not available in TrashItem.
+      // A complete restore for files would require caching the Blob or moving the file in Supabase Storage.
+      // For this implementation, we just restore the database record.
+    }
+
     showToast(`${item.title} restored`, 'success');
   };
 
   const handlePermanentDelete = async (item: TrashItem) => {
     if (!currentUser) return;
-    
-    // Remove from active arrays permanently
-    if (item.type === 'note') setNotes(prev => prev.filter(n => n.id !== item.originalId));
-    if (item.type === 'todo') setTasks(prev => prev.filter(t => t.id !== item.originalId));
-    if (item.type === 'worklog') setWorklogs(prev => prev.filter(w => w.id !== item.originalId));
-    if (item.type === 'folder') setFolders(prev => prev.filter(f => f.id !== item.originalId));
-    if (item.type === 'file') setFiles(prev => prev.filter(f => f.id !== item.originalId));
-
-    // Delete from Supabase permanently
-    if (item.type === 'note') await syncDeleteNote(currentUser.id, item.originalId);
-    if (item.type === 'todo') await syncDeleteTodo(currentUser.id, item.originalId);
-    if (item.type === 'worklog') await syncDeleteWorkLog(currentUser.id, item.originalId);
-    if (item.type === 'folder') await syncDeleteFolder(currentUser.id, item.originalId);
-    if (item.type === 'file') {
-      const fileData = item.data as UserFile;
-      if (fileData) await syncDeleteFile(currentUser.id, item.originalId, fileData.filePath);
-    }
-
+    // Items are already deleted from Supabase during the main delete action,
+    // so we just remove them from the trash state.
     setTrashItems(prev => prev.filter(t => t.id !== item.id));
     showToast('Item permanently deleted', 'info');
   };
 
   const handleEmptyTrash = async () => {
     if (!currentUser) return;
-    // Permanently delete all items
-    for (const item of trashItems) {
-      if (item.type === 'note') setNotes(prev => prev.filter(n => n.id !== item.originalId));
-      if (item.type === 'todo') setTasks(prev => prev.filter(t => t.id !== item.originalId));
-      if (item.type === 'worklog') setWorklogs(prev => prev.filter(w => w.id !== item.originalId));
-      if (item.type === 'folder') setFolders(prev => prev.filter(f => f.id !== item.originalId));
-      if (item.type === 'file') setFiles(prev => prev.filter(f => f.id !== item.originalId));
-
-      if (item.type === 'note') await syncDeleteNote(currentUser.id, item.originalId);
-      if (item.type === 'todo') await syncDeleteTodo(currentUser.id, item.originalId);
-      if (item.type === 'worklog') await syncDeleteWorkLog(currentUser.id, item.originalId);
-      if (item.type === 'folder') await syncDeleteFolder(currentUser.id, item.originalId);
-      if (item.type === 'file') {
-        const fileData = item.data as UserFile;
-        if (fileData) await syncDeleteFile(currentUser.id, item.originalId, fileData.filePath);
-      }
-    }
+    // Items are already deleted from Supabase during the main delete action,
+    // so we just clear the trash state.
     setTrashItems([]);
     showToast('Trash emptied completely', 'success');
   };

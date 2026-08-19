@@ -1214,7 +1214,8 @@ export async function syncFetchFolders(
 export async function syncCreateFolder(
   userId: string,
   name: string,
-  parentId?: string | null
+  parentId?: string | null,
+  providedId?: string
 ): Promise<{ data: Folder | null; error: string | null }> {
   const client = getSupabase();
   const localKey = getUserFoldersKey(userId);
@@ -1222,13 +1223,17 @@ export async function syncCreateFolder(
   if (client) {
     try {
       const validParentId = parentId && isValidUUID(parentId) ? parentId : null;
-      const payload = {
+      const payload: any = {
         user_id: userId,
         name: name.trim() || 'New Folder',
         parent_id: validParentId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
+      
+      if (providedId) {
+        payload.id = providedId;
+      }
 
       const { data, error } = await client
         .from('folders')

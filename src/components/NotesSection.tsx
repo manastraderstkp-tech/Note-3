@@ -16,12 +16,13 @@ import {
   Paperclip
 } from 'lucide-react';
 import { Note } from '../types';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface NotesSectionProps {
   notes: Note[];
   onAddNote: () => void;
   onEditNote: (note: Note) => void;
-  onDeleteNote: (id: string) => void;
+  onDeleteNote: (id: string) => Promise<void> | void;
   onTogglePin: (id: string) => void;
   searchQuery: string;
   selectedCategory: string | null;
@@ -39,6 +40,7 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
   onSelectCategory,
 }) => {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [deleteModalState, setDeleteModalState] = useState<{ isOpen: boolean; id: string; name: string }>({ isOpen: false, id: '', name: '' });
 
   // Extract all unique tags
   const allTags = Array.from(new Set(notes.flatMap((n) => n.tags || [])));
@@ -283,7 +285,10 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
                       <Edit3 className="h-3.5 w-3.5" />
                     </button>
                     <button
-                      onClick={() => onDeleteNote(note.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteModalState({ isOpen: true, id: note.id, name: note.title || 'Untitled Note' });
+                      }}
                       className="rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
                       title="Delete note"
                     >
@@ -308,6 +313,15 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
           </p>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        isOpen={deleteModalState.isOpen}
+        onClose={() => setDeleteModalState({ ...deleteModalState, isOpen: false })}
+        onConfirm={async () => {
+          await onDeleteNote(deleteModalState.id);
+        }}
+        itemName={deleteModalState.name}
+      />
     </div>
   );
 };

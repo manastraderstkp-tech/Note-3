@@ -16,7 +16,10 @@ import {
   Tag,
   FileDown,
   Search,
-  X
+  X,
+  Receipt,
+  ArrowUpRight,
+  ArrowDownLeft
 } from 'lucide-react';
 import { Note, TodoTask, WorkLog, MetricStats, NavSection, TaskStatus } from '../types';
 import { MetricCards } from './MetricCards';
@@ -388,6 +391,48 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Add Time Entry</span>
+              </button>
+            </div>
+          </div>
+
+          {/* My Transactions & Accounting Quick Card */}
+          <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-emerald-50/50 via-white to-slate-50 p-6 shadow-xs dark:border-slate-800 dark:from-emerald-950/20 dark:via-slate-900 dark:to-slate-900">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                  <Receipt className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                    My Transactions
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Receipts, payments & daily expenses</p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => onNavigate('transactions')}
+                className="flex items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 transition"
+              >
+                <span>Open Daybook</span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                onClick={() => onNavigate('transactions')}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-rose-50 border border-rose-200/60 py-2 px-3 text-[11px] font-bold text-rose-700 hover:bg-rose-100/70 transition dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300"
+              >
+                <ArrowUpRight className="h-3.5 w-3.5" />
+                <span>Daily Expenses</span>
+              </button>
+              <button
+                onClick={() => onNavigate('transactions')}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-50 border border-emerald-200/60 py-2 px-3 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100/70 transition dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300"
+              >
+                <ArrowDownLeft className="h-3.5 w-3.5" />
+                <span>Income / Receipts</span>
               </button>
             </div>
           </div>

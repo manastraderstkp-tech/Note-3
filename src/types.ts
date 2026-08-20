@@ -1,4 +1,4 @@
-export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket' | 'trash' | 'account';
+export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket' | 'transactions' | 'trash' | 'account';
 
 export type UserRole = 'admin' | 'user';
 
@@ -172,7 +172,7 @@ export interface ShareMarketState {
   watchlist: string[];
 }
 
-export type TrashItemType = 'note' | 'todo' | 'worklog' | 'file' | 'folder';
+export type TrashItemType = 'note' | 'todo' | 'worklog' | 'file' | 'folder' | 'transaction';
 
 export interface TrashItem {
   id: string;
@@ -181,5 +181,47 @@ export interface TrashItem {
   title: string; // Used for display in the trash list
   deletedAt: string;
   data: any; // The original serialized object
+}
+
+export type TransactionType = 'payment' | 'receipt' | 'transfer';
+export type PaymentMethod = 'Cash' | 'Bank Transfer' | 'eSewa' | 'Khalti' | 'ConnectIPS' | 'Cheque' | 'Credit Card' | 'Other';
+
+export interface Transaction {
+  id: string;
+  userId: string;
+  voucherNo: string; // e.g. RCP-001, PYM-001, TRF-001
+  type: TransactionType; // payment = expense, receipt = income, transfer = contra
+  date: string; // YYYY-MM-DD
+  time?: string; // HH:mm
+  amount: number;
+  category: string; // e.g. "Office Rent", "Food & Tea", "Sales", "Utilities", etc.
+  paymentMethod: PaymentMethod;
+  transferToMethod?: PaymentMethod; // When type === 'transfer'
+  partyName?: string; // Customer, Vendor, Employee, Payee or Payer
+  description: string;
+  receiptUrl?: string; // Attachment / Bill preview URL
+  panVatNumber?: string;
+  hasTaxVat?: boolean;
+  taxAmount?: number;
+  tags?: string[];
+  isRecurring?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
+}
+
+export interface AccountingSummary {
+  totalReceipts: number;
+  totalPayments: number;
+  netBalance: number;
+  todayReceipts: number;
+  todayPayments: number;
+  thisMonthReceipts: number;
+  thisMonthPayments: number;
+  cashBalance: number;
+  bankBalance: number;
+  digitalWalletBalance: number;
+  transactionCount: number;
 }
 

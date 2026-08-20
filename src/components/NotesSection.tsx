@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Note } from '../types';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { getNotePreviewText, stripHtmlToText } from '../lib/textUtils';
 
 interface NotesSectionProps {
   notes: Note[];
@@ -47,11 +48,13 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
 
   // Filter notes
   const filteredNotes = notes.filter((note) => {
+    const plainContent = stripHtmlToText(note.content || '').toLowerCase();
+    const query = searchQuery.toLowerCase();
     const matchesSearch =
       !searchQuery ||
-      note.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      note.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      note.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
+      note.title.toLowerCase().includes(query) ||
+      plainContent.includes(query) ||
+      note.tags.some((t) => t.toLowerCase().includes(query));
 
     const matchesCategory = !selectedCategory || note.category === selectedCategory;
     const matchesTag = !selectedTag || note.tags.includes(selectedTag);
@@ -253,7 +256,7 @@ export const NotesSection: React.FC<NotesSectionProps> = ({
                   onClick={() => onEditNote(note)}
                   className="mt-2 cursor-pointer line-clamp-3 whitespace-pre-line text-xs leading-relaxed text-slate-600 dark:text-slate-300"
                 >
-                  {note.content}
+                  {getNotePreviewText(note.content, 220)}
                 </p>
               </div>
 

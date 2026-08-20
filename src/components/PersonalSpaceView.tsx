@@ -18,6 +18,7 @@ import {
   Search
 } from 'lucide-react';
 import { Note, TodoTask, WorkLog, MetricStats, NavSection, TaskStatus, UserSession } from '../types';
+import { getNotePreviewText, stripHtmlToText } from '../lib/textUtils';
 
 interface PersonalSpaceViewProps {
   currentUser: UserSession | null;
@@ -64,7 +65,7 @@ export const PersonalSpaceView: React.FC<PersonalSpaceViewProps> = ({
     ? notes.filter(
         (n) =>
           n.title.toLowerCase().includes(query) ||
-          n.content.toLowerCase().includes(query) ||
+          stripHtmlToText(n.content || '').toLowerCase().includes(query) ||
           n.category.toLowerCase().includes(query) ||
           n.tags?.some((t) => t.toLowerCase().includes(query))
       )
@@ -359,7 +360,7 @@ export const PersonalSpaceView: React.FC<PersonalSpaceViewProps> = ({
                       {note.title}
                     </h5>
                     <p className="mt-1.5 line-clamp-3 text-[11px] text-slate-500 dark:text-slate-400">
-                      {note.content}
+                      {getNotePreviewText(note.content, 140)}
                     </p>
                   </div>
 

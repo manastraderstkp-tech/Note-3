@@ -4,7 +4,6 @@ import {
   Sun,
   Moon,
   Plus,
-  Bell,
   CheckCircle2,
   FileText,
   Clock,
@@ -81,7 +80,6 @@ export const Header: React.FC<HeaderProps> = ({
   onEditWorkLog,
 }) => {
   const [showQuickAdd, setShowQuickAdd] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
 
@@ -136,12 +134,6 @@ export const Header: React.FC<HeaderProps> = ({
       totalCount,
     };
   }, [searchQuery, notes, tasks, worklogs]);
-
-  const notifications = [
-    { id: 1, title: 'Sound Notification Engine', desc: 'Synthesized Web Audio & background scheduler active', time: 'Live', icon: Volume2, color: 'text-indigo-500' },
-    { id: 2, title: 'Supabase RLS Active', desc: 'Row Level Security guarantees your data is isolated', time: 'Active', icon: ShieldCheck, color: 'text-emerald-500' },
-    { id: 3, title: 'GitHub & Deploy Ready', desc: '1-click deployment guide for Vercel & Netlify', time: 'Guide', icon: Github, color: 'text-amber-500' },
-  ];
 
   const getInitials = (name?: string, email?: string) => {
     if (name && name.trim()) {
@@ -351,7 +343,6 @@ export const Header: React.FC<HeaderProps> = ({
             id="btn-quick-add"
             onClick={() => {
               setShowQuickAdd(!showQuickAdd);
-              setShowNotifications(false);
               setShowProfileMenu(false);
             }}
             className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 active:scale-[0.98] sm:px-4 sm:py-2 sm:text-sm"
@@ -432,65 +423,6 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
-        {/* Notification Bell */}
-        <div className="relative">
-          <button
-            id="btn-notifications-toggle"
-            onClick={() => {
-              setShowNotifications(!showNotifications);
-              setShowQuickAdd(false);
-              setShowProfileMenu(false);
-            }}
-            className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 sm:h-10 sm:w-10 dark:border-slate-700/80 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
-            aria-label="View recent activity"
-          >
-            <Bell className="h-4 w-4" />
-            <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-indigo-600 ring-2 ring-white dark:ring-slate-900" />
-          </button>
-
-          {showNotifications && (
-            <div
-              id="dropdown-notifications"
-              className="absolute right-0 mt-2 w-72 sm:w-80 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl transition-all dark:border-slate-700 dark:bg-slate-800 z-50"
-            >
-              <div className="mb-2 flex items-center justify-between border-b border-slate-100 pb-2 dark:border-slate-700">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Notification Center
-                </span>
-                <button
-                  onClick={() => {
-                    setShowNotifications(false);
-                    onOpenSoundSettingsModal();
-                  }}
-                  className="text-[10px] font-bold text-indigo-600 hover:underline dark:text-indigo-400"
-                >
-                  Configure Audio
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {notifications.map((n) => {
-                  const Icon = n.icon;
-                  return (
-                    <div
-                      key={n.id}
-                      className="flex items-start gap-2.5 rounded-lg p-2 transition hover:bg-slate-50 dark:hover:bg-slate-750/50"
-                    >
-                      <div className="mt-0.5">
-                        <Icon className={`h-4 w-4 ${n.color}`} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">{n.title}</p>
-                        <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">{n.desc}</p>
-                        <span className="text-[10px] text-slate-400">{n.time}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* User Profile / Auth Button */}
         {currentUser ? (
           <div className="relative">
@@ -499,7 +431,6 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => {
                 setShowProfileMenu(!showProfileMenu);
                 setShowQuickAdd(false);
-                setShowNotifications(false);
               }}
               className="flex items-center gap-2 rounded-xl p-1 transition hover:bg-slate-100 dark:hover:bg-slate-800"
               aria-label="User Profile menu"

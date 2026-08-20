@@ -605,54 +605,6 @@ export const Header: React.FC<HeaderProps> = ({
                     </button>
                   )}
 
-                  <button
-                    id="btn-menu-export-data"
-                    onClick={() => {
-                      onOpenExportModal('all');
-                      setShowProfileMenu(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
-                  >
-                    <FileDown className="h-3.5 w-3.5 text-indigo-500" />
-                    <span>Export CSV / PDF Reports</span>
-                  </button>
-
-                  <button
-                    id="btn-menu-sound-settings"
-                    onClick={() => {
-                      onOpenSoundSettingsModal();
-                      setShowProfileMenu(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
-                  >
-                    <Volume2 className="h-3.5 w-3.5 text-indigo-500" />
-                    <span>Sound & Reminder Alerts</span>
-                  </button>
-
-                  <button
-                    id="btn-menu-deploy-guide"
-                    onClick={() => {
-                      onOpenDeployGuideModal();
-                      setShowProfileMenu(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
-                  >
-                    <Github className="h-3.5 w-3.5 text-slate-600 dark:text-slate-300" />
-                    <span>GitHub & Deploy Guide</span>
-                  </button>
-
-                  <button
-                    id="btn-menu-sql-schema"
-                    onClick={() => {
-                      onOpenSqlModal();
-                      setShowProfileMenu(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
-                  >
-                    <Database className="h-3.5 w-3.5 text-emerald-500" />
-                    <span>Supabase SQL & RBAC Schema</span>
-                  </button>
-
                   {onOpenConfigModal && (
                     <button
                       id="btn-menu-supabase-keys"

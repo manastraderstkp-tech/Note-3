@@ -210,6 +210,8 @@ export async function fetchUserProfile(
           id: data.id,
           email: data.email || trimmedEmail,
           fullName: data.full_name || fullName,
+          phoneNumber: data.phone_number,
+          avatarUrl: data.avatar_url,
           role,
           createdAt: data.created_at || new Date().toISOString(),
           updatedAt: data.updated_at,
@@ -280,6 +282,8 @@ export async function fetchAllProfiles(): Promise<UserProfile[]> {
           id: d.id,
           email: d.email || '',
           fullName: d.full_name || '',
+          phoneNumber: d.phone_number,
+          avatarUrl: d.avatar_url,
           role: (d.role === 'admin' ? 'admin' : 'user') as UserRole,
           createdAt: d.created_at || new Date().toISOString(),
           updatedAt: d.updated_at,
@@ -343,19 +347,25 @@ export async function updateUserRoleInDb(
 
 export async function updateUserProfileData(
   userId: string,
-  updates: { fullName?: string }
+  updates: { fullName?: string; phoneNumber?: string; avatarUrl?: string }
 ): Promise<{ success: boolean; user?: UserSession; error?: string }> {
   const client = getSupabase();
-  const trimmedName = updates.fullName?.trim() || '';
+  const trimmedName = updates.fullName !== undefined ? updates.fullName.trim() : undefined;
+  const trimmedPhone = updates.phoneNumber !== undefined ? updates.phoneNumber.trim() : undefined;
+  const avatarUrl = updates.avatarUrl !== undefined ? updates.avatarUrl : undefined;
 
   if (client) {
     try {
+      const dbUpdates: Record<string, any> = {
+        updated_at: new Date().toISOString(),
+      };
+      if (trimmedName !== undefined) dbUpdates.full_name = trimmedName;
+      if (trimmedPhone !== undefined) dbUpdates.phone_number = trimmedPhone;
+      if (avatarUrl !== undefined) dbUpdates.avatar_url = avatarUrl;
+
       const { error: profileError } = await client
         .from('profiles')
-        .update({
-          full_name: trimmedName,
-          updated_at: new Date().toISOString(),
-        })
+        .update(dbUpdates)
         .eq('id', userId);
 
       if (profileError) {
@@ -364,8 +374,13 @@ export async function updateUserProfileData(
 
       // Also update auth user metadata if active session exists
       try {
+        const authData: Record<string, any> = {};
+        if (trimmedName !== undefined) authData.full_name = trimmedName;
+        if (trimmedPhone !== undefined) authData.phone_number = trimmedPhone;
+        if (avatarUrl !== undefined) authData.avatar_url = avatarUrl;
+
         await client.auth.updateUser({
-          data: { full_name: trimmedName },
+          data: authData,
         });
       } catch (authErr) {
         console.warn('Auth updateUser error:', authErr);
@@ -379,7 +394,9 @@ export async function updateUserProfileData(
   const localProfiles = getLocalProfiles();
   const index = localProfiles.findIndex((p) => p.id === userId);
   if (index !== -1) {
-    localProfiles[index].fullName = trimmedName;
+    if (trimmedName !== undefined) localProfiles[index].fullName = trimmedName;
+    if (trimmedPhone !== undefined) localProfiles[index].phoneNumber = trimmedPhone;
+    if (avatarUrl !== undefined) localProfiles[index].avatarUrl = avatarUrl;
     localProfiles[index].updatedAt = new Date().toISOString();
     try {
       localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(localProfiles));
@@ -391,7 +408,9 @@ export async function updateUserProfileData(
   // Update current user session
   const currentUser = getCurrentStoredUser();
   if (currentUser && currentUser.id === userId) {
-    currentUser.fullName = trimmedName;
+    if (trimmedName !== undefined) currentUser.fullName = trimmedName;
+    if (trimmedPhone !== undefined) currentUser.phoneNumber = trimmedPhone;
+    if (avatarUrl !== undefined) currentUser.avatarUrl = avatarUrl;
     storeLocalUser(currentUser);
     return { success: true, user: currentUser };
   }

@@ -1,34 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   User,
   Mail,
-  Shield,
+  Phone,
+  Camera,
+  Upload,
+  Image as ImageIcon,
   KeyRound,
   Trash2,
   Edit3,
   CheckCircle2,
   AlertTriangle,
-  Sparkles,
   Clock,
   FileText,
   CheckSquare,
-  FolderOpen,
   Save,
   Lock,
   Loader2,
   Crown,
   LogOut,
   AlertCircle,
-  Database,
-  Calendar
+  Calendar,
+  X,
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import { UserSession, MetricStats } from '../types';
-import { getStoredSupabaseConfig } from '../lib/supabase';
 
 interface AccountViewProps {
   currentUser: UserSession | null;
   stats: MetricStats;
-  onUpdateProfile: (updated: { fullName: string }) => Promise<{ success: boolean; error?: string }>;
+  onUpdateProfile: (updated: { fullName?: string; phoneNumber?: string; avatarUrl?: string }) => Promise<{ success: boolean; error?: string }>;
   onChangePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
   onDeleteAccount: () => Promise<{ success: boolean; error?: string }>;
   onSignOut: () => void;
@@ -36,6 +38,15 @@ interface AccountViewProps {
   onOpenSqlModal: () => void;
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
+
+const PRESET_AVATARS = [
+  { id: 'av1', label: 'Executive Blue', url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80' },
+  { id: 'av2', label: 'Creative Purple', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80' },
+  { id: 'av3', label: 'Modern Emerald', url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&auto=format&fit=crop&q=80' },
+  { id: 'av4', label: 'Tech Slate', url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&auto=format&fit=crop&q=80' },
+  { id: 'av5', label: 'Energetic Amber', url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=200&auto=format&fit=crop&q=80' },
+  { id: 'av6', label: 'Minimal Indigo', url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80' },
+];
 
 export const AccountView: React.FC<AccountViewProps> = ({
   currentUser,
@@ -45,14 +56,20 @@ export const AccountView: React.FC<AccountViewProps> = ({
   onDeleteAccount,
   onSignOut,
   onOpenAuth,
-  onOpenSqlModal,
   onShowToast,
 }) => {
-  const { isConfigured } = getStoredSupabaseConfig();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Profile Edit State
   const [fullName, setFullName] = useState(currentUser?.fullName || '');
+  const [phoneNumber, setPhoneNumber] = useState(currentUser?.phoneNumber || '');
+  const [avatarUrl, setAvatarUrl] = useState(currentUser?.avatarUrl || '');
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+
+  // Avatar Picker Modal/State
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [customImageUrl, setCustomImageUrl] = useState('');
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
 
   // Password Change State
   const [newPassword, setNewPassword] = useState('');
@@ -67,8 +84,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
   // Update local state if currentUser changes
   React.useEffect(() => {
-    if (currentUser?.fullName) {
-      setFullName(currentUser.fullName);
+    if (currentUser) {
+      setFullName(currentUser.fullName || '');
+      setPhoneNumber(currentUser.phoneNumber || '');
+      setAvatarUrl(currentUser.avatarUrl || '');
     }
   }, [currentUser]);
 
@@ -82,6 +101,90 @@ export const AccountView: React.FC<AccountViewProps> = ({
     return 'WS';
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      onShowToast('Please select a valid image file (JPEG, PNG, WEBP).', 'error');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      onShowToast('Image size should be less than 5MB.', 'error');
+      return;
+    }
+
+    setIsProcessingImage(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result as string;
+      if (result) {
+        // Compress / resize image using HTML5 canvas
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxDim = 320;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            }
+          } else {
+            if (height > maxDim) {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const optimizedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+            setAvatarUrl(optimizedBase64);
+            setShowAvatarPicker(false);
+            onShowToast('New profile photo selected. Click "Save Profile" to keep changes.', 'info');
+          } else {
+            setAvatarUrl(result);
+            setShowAvatarPicker(false);
+          }
+          setIsProcessingImage(false);
+        };
+        img.onerror = () => {
+          setAvatarUrl(result);
+          setShowAvatarPicker(false);
+          setIsProcessingImage(false);
+        };
+        img.src = result;
+      }
+    };
+    reader.onerror = () => {
+      onShowToast('Failed to read image file.', 'error');
+      setIsProcessingImage(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleApplyCustomUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customImageUrl.trim()) return;
+    setAvatarUrl(customImageUrl.trim());
+    setCustomImageUrl('');
+    setShowAvatarPicker(false);
+    onShowToast('Profile photo link applied. Click "Save Profile" to save changes.', 'info');
+  };
+
+  const handleRemoveAvatar = () => {
+    setAvatarUrl('');
+    setShowAvatarPicker(false);
+    onShowToast('Profile picture removed. Click "Save Profile" to save changes.', 'info');
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
@@ -92,11 +195,15 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
     setIsUpdatingProfile(true);
     try {
-      const res = await onUpdateProfile({ fullName: fullName.trim() });
+      const res = await onUpdateProfile({
+        fullName: fullName.trim(),
+        phoneNumber: phoneNumber.trim(),
+        avatarUrl: avatarUrl.trim(),
+      });
       if (res.success) {
-        onShowToast('Profile name updated successfully!', 'success');
+        onShowToast('Profile details updated successfully!', 'success');
       } else {
-        onShowToast(res.error || 'Failed to update profile name.', 'error');
+        onShowToast(res.error || 'Failed to update profile details.', 'error');
       }
     } catch (err: any) {
       onShowToast(err?.message || 'An unexpected error occurred.', 'error');
@@ -148,7 +255,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
     try {
       const res = await onDeleteAccount();
       if (res.success) {
-        onShowToast('Your account and associated workspace data have been deleted.', 'success');
+        onShowToast('Your account and workspace data have been completely deleted.', 'success');
         setShowDeleteConfirm(false);
       } else {
         onShowToast(res.error || 'Failed to delete account.', 'error');
@@ -200,13 +307,13 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Page Title & Breadcrumb */}
+      {/* Page Title */}
       <div>
         <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
           My Account
         </h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Manage your personal profile, credentials, security, and workspace data.
+          Manage your personal profile, profile picture, contact number, and security credentials.
         </p>
       </div>
 
@@ -239,17 +346,47 @@ export const AccountView: React.FC<AccountViewProps> = ({
         <div className="relative px-6 pb-6 pt-0">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 -mt-12 sm:-mt-14 mb-4">
             <div className="flex items-end gap-4">
-              <div className="flex h-24 w-24 sm:h-28 sm:w-28 items-center justify-center rounded-3xl bg-slate-900 text-2xl sm:text-3xl font-black text-white shadow-xl ring-4 ring-white dark:ring-slate-900">
-                {getInitials(currentUser.fullName, currentUser.email)}
+              {/* Profile Avatar with Camera Trigger */}
+              <div className="relative group">
+                <div className="flex h-24 w-24 sm:h-28 sm:w-28 items-center justify-center rounded-3xl bg-slate-900 text-2xl sm:text-3xl font-black text-white shadow-xl ring-4 ring-white dark:ring-slate-900 overflow-hidden">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={fullName || 'Profile Avatar'}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span>{getInitials(fullName || currentUser.fullName, currentUser.email)}</span>
+                  )}
+                </div>
+
+                <button
+                  id="btn-change-avatar-banner"
+                  type="button"
+                  onClick={() => setShowAvatarPicker(true)}
+                  className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-md hover:bg-indigo-700 ring-2 ring-white dark:ring-slate-900 transition active:scale-95"
+                  title="Change profile picture"
+                >
+                  <Camera className="h-4 w-4" />
+                </button>
               </div>
+
               <div className="mb-1 min-w-0">
                 <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white truncate">
-                  {currentUser.fullName || currentUser.email.split('@')[0]}
+                  {fullName || currentUser.fullName || currentUser.email.split('@')[0]}
                 </h2>
-                <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1.5 truncate">
-                  <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                  <span>{currentUser.email}</span>
-                </p>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  <span className="flex items-center gap-1.5 truncate">
+                    <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span>{currentUser.email}</span>
+                  </span>
+                  {(phoneNumber || currentUser.phoneNumber) && (
+                    <span className="flex items-center gap-1.5 truncate font-medium text-slate-700 dark:text-slate-300">
+                      <Phone className="h-3.5 w-3.5 shrink-0 text-indigo-500" />
+                      <span>{phoneNumber || currentUser.phoneNumber}</span>
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -322,12 +459,59 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 Edit Profile Details
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Update your display name across notes and tasks
+                Update your display name, contact number, and profile picture
               </p>
             </div>
           </div>
 
           <form onSubmit={handleSaveProfile} className="space-y-4">
+            {/* Profile Picture Controls in Edit Form */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                Profile Picture
+              </label>
+              <div className="flex items-center gap-4 p-3 rounded-2xl border border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-850/60">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-slate-900 font-bold text-white shadow-sm overflow-hidden ring-2 ring-white dark:ring-slate-800">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt="Avatar Preview"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-base font-black">
+                      {getInitials(fullName || currentUser.fullName, currentUser.email)}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    id="btn-open-avatar-picker"
+                    type="button"
+                    onClick={() => setShowAvatarPicker(true)}
+                    className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-indigo-700 transition active:scale-95"
+                  >
+                    <Camera className="h-3.5 w-3.5" />
+                    <span>{avatarUrl ? 'Change Picture' : 'Add Picture'}</span>
+                  </button>
+
+                  {avatarUrl && (
+                    <button
+                      id="btn-remove-avatar"
+                      type="button"
+                      onClick={handleRemoveAvatar}
+                      className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400 transition"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Remove</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Display Name */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
                 Display Name
@@ -344,6 +528,30 @@ export const AccountView: React.FC<AccountViewProps> = ({
               </div>
             </div>
 
+            {/* Contact / Phone Number */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                Contact Number
+              </label>
+              <div className="relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-400">
+                  <Phone className="h-4 w-4" />
+                </div>
+                <input
+                  id="input-account-phone"
+                  type="tel"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="+977 98XXXXXXXX / Phone Number"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-3.5 py-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Used for account identification, contact card, and workspace records.
+              </p>
+            </div>
+
+            {/* Email Address (Read-only) */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
                 Email Address
@@ -458,39 +666,6 @@ export const AccountView: React.FC<AccountViewProps> = ({
         </div>
       </div>
 
-      {/* Account Info & Security Details */}
-      <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-          <Shield className="h-4 w-4 text-emerald-500" />
-          <span>Security & Environment Architecture</span>
-        </h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-850">
-            <p className="font-bold text-slate-800 dark:text-slate-200">Account ID (UID)</p>
-            <p className="mt-1 font-mono text-[11px] text-slate-500 dark:text-slate-400 break-all select-all">
-              {currentUser.id}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-850">
-            <p className="font-bold text-slate-800 dark:text-slate-200">Database Connection</p>
-            <p className="mt-1 text-slate-500 dark:text-slate-400">
-              {isConfigured ? 'Supabase PostgreSQL Cloud' : 'Browser User Space'}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-850">
-            <p className="font-bold text-slate-800 dark:text-slate-200">Role-Based Access (RBAC)</p>
-            <p className="mt-1 text-slate-500 dark:text-slate-400">
-              {currentUser.role === 'admin'
-                ? 'Full administrative control & user role editor'
-                : 'Standard isolated personal space'}
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Danger Zone: Delete Account */}
       <div className="overflow-hidden rounded-3xl border border-rose-200 bg-rose-50/40 p-6 dark:border-rose-900/50 dark:bg-rose-950/20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -515,6 +690,159 @@ export const AccountView: React.FC<AccountViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Profile Picture / Avatar Picker Modal */}
+      {showAvatarPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs transition-opacity"
+            onClick={() => setShowAvatarPicker(false)}
+          />
+          <div className="relative w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 z-10 animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400">
+                  <Camera className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Choose Profile Picture
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Upload your own photo or pick from preset avatars
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAvatarPicker(false)}
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-6 pt-4">
+              {/* Option 1: File Upload */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                  Upload From Computer / Phone
+                </label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  disabled={isProcessingImage}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/50 p-6 text-center hover:bg-indigo-50/80 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/40 transition group cursor-pointer"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-600 group-hover:scale-110 dark:bg-indigo-900 dark:text-indigo-300 transition-transform">
+                    {isProcessingImage ? (
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                    ) : (
+                      <Upload className="h-6 w-6" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-indigo-950 dark:text-indigo-200">
+                      Click to Browse or Take Photo
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      PNG, JPG, WEBP up to 5MB (auto-optimized)
+                    </p>
+                  </div>
+                </button>
+              </div>
+
+              {/* Option 2: Curated Preset Avatars */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Preset Avatar Gallery
+                  </label>
+                  <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium">
+                    Instant Select
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                  {PRESET_AVATARS.map((av) => (
+                    <button
+                      key={av.id}
+                      type="button"
+                      onClick={() => {
+                        setAvatarUrl(av.url);
+                        setShowAvatarPicker(false);
+                        onShowToast(`Selected ${av.label}. Click "Save Profile" to keep it.`, 'info');
+                      }}
+                      className={`relative aspect-square overflow-hidden rounded-2xl border-2 transition hover:scale-105 active:scale-95 group ${
+                        avatarUrl === av.url
+                          ? 'border-indigo-600 ring-2 ring-indigo-600/30'
+                          : 'border-slate-200 hover:border-indigo-400 dark:border-slate-700'
+                      }`}
+                    >
+                      <img
+                        src={av.url}
+                        alt={av.label}
+                        className="h-full w-full object-cover"
+                      />
+                      {avatarUrl === av.url && (
+                        <div className="absolute inset-0 bg-indigo-600/30 flex items-center justify-center">
+                          <CheckCircle2 className="h-5 w-5 text-white drop-shadow-md" />
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Option 3: Direct Web Image URL */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                  Or Paste Direct Image Link (URL)
+                </label>
+                <form onSubmit={handleApplyCustomUrl} className="flex gap-2">
+                  <input
+                    type="url"
+                    value={customImageUrl}
+                    onChange={(e) => setCustomImageUrl(e.target.value)}
+                    placeholder="https://example.com/my-photo.jpg"
+                    className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs text-slate-800 focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!customImageUrl.trim()}
+                    className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-700 dark:hover:bg-slate-600 transition"
+                  >
+                    Apply URL
+                  </button>
+                </form>
+              </div>
+
+              {/* Clear / Reset option */}
+              {avatarUrl && (
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Want to reset back to initial letters?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleRemoveAvatar}
+                    className="flex items-center gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Remove Profile Photo</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (

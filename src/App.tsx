@@ -557,13 +557,18 @@ export default function App() {
     setCurrentUser(null);
   };
 
-  const handleUpdateProfile = async (updated: { fullName: string }) => {
+  const handleUpdateProfile = async (updated: { fullName?: string; phoneNumber?: string; avatarUrl?: string }) => {
     if (!currentUser) return { success: false, error: 'No active user session found.' };
     const res = await updateUserProfileData(currentUser.id, updated);
     if (res.success && res.user) {
       setCurrentUser(res.user);
     } else if (res.success) {
-      setCurrentUser({ ...currentUser, fullName: updated.fullName });
+      setCurrentUser({
+        ...currentUser,
+        ...(updated.fullName !== undefined ? { fullName: updated.fullName } : {}),
+        ...(updated.phoneNumber !== undefined ? { phoneNumber: updated.phoneNumber } : {}),
+        ...(updated.avatarUrl !== undefined ? { avatarUrl: updated.avatarUrl } : {}),
+      });
     }
     return res;
   };

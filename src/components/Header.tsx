@@ -504,8 +504,16 @@ export const Header: React.FC<HeaderProps> = ({
               className="flex items-center gap-2 rounded-xl p-1 transition hover:bg-slate-100 dark:hover:bg-slate-800"
               aria-label="User Profile menu"
             >
-              <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 font-bold text-white shadow-sm ring-2 ring-white dark:ring-slate-800">
-                <span className="text-xs">{getInitials(currentUser.fullName, currentUser.email)}</span>
+              <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 font-bold text-white shadow-sm ring-2 ring-white dark:ring-slate-800 overflow-hidden">
+                {currentUser.avatarUrl ? (
+                  <img
+                    src={currentUser.avatarUrl}
+                    alt={currentUser.fullName || 'User'}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="text-xs">{getInitials(currentUser.fullName, currentUser.email)}</span>
+                )}
                 <span className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-slate-900 ${isConfigured ? 'bg-emerald-500' : 'bg-indigo-400'}`} />
               </div>
               <div className="hidden text-left sm:block">

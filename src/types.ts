@@ -30,6 +30,8 @@ export interface UserSession {
   id: string;
   email: string;
   fullName?: string;
+  phoneNumber?: string;
+  avatarUrl?: string;
   role: UserRole; // 'admin' | 'user'
   isDemo?: boolean;
   createdAt?: string;
@@ -39,6 +41,8 @@ export interface UserProfile {
   id: string;
   email: string;
   fullName?: string;
+  phoneNumber?: string;
+  avatarUrl?: string;
   role: UserRole;
   createdAt: string;
   updatedAt?: string;

@@ -38,10 +38,16 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email TEXT NOT NULL,
     full_name TEXT,
+    phone_number TEXT,
+    avatar_url TEXT,
     role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+-- Ensure columns exist for existing database instances
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone_number TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
@@ -60,11 +66,13 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-    INSERT INTO public.profiles (id, email, full_name, role, created_at, updated_at)
+    INSERT INTO public.profiles (id, email, full_name, phone_number, avatar_url, role, created_at, updated_at)
     VALUES (
         NEW.id,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+        NEW.raw_user_meta_data->>'phone_number',
+        NEW.raw_user_meta_data->>'avatar_url',
         CASE 
             WHEN LOWER(NEW.email) = 'manastraderstkp@gmail.com' THEN 'admin'
             ELSE 'user'
@@ -74,7 +82,9 @@ BEGIN
     )
     ON CONFLICT (id) DO UPDATE
     SET email = EXCLUDED.email,
-        full_name = EXCLUDED.full_name,
+        full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
+        phone_number = COALESCE(EXCLUDED.phone_number, public.profiles.phone_number),
+        avatar_url = COALESCE(EXCLUDED.avatar_url, public.profiles.avatar_url),
         updated_at = NOW();
     RETURN NEW;
 END;

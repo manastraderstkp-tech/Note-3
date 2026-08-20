@@ -195,9 +195,23 @@ export async function fetchUserProfile(
 ): Promise<{ role: UserRole; profile: UserProfile | null }> {
   const client = getSupabase();
   const trimmedEmail = (email || '').trim().toLowerCase();
+  const localProfiles = getLocalProfiles();
+  const localExisting = localProfiles.find((p) => p.id === userId || (trimmedEmail && p.email === trimmedEmail));
+  const storedUser = getCurrentStoredUser();
 
   if (client) {
     try {
+      // Check auth metadata for fallback
+      let authMeta: Record<string, any> = {};
+      try {
+        const { data: authUserData } = await client.auth.getUser();
+        if (authUserData?.user?.id === userId && authUserData.user.user_metadata) {
+          authMeta = authUserData.user.user_metadata;
+        }
+      } catch {
+        // ignore
+      }
+
       const { data, error } = await client
         .from('profiles')
         .select('*')
@@ -209,9 +223,9 @@ export async function fetchUserProfile(
         const profile: UserProfile = {
           id: data.id,
           email: data.email || trimmedEmail,
-          fullName: data.full_name || fullName,
-          phoneNumber: data.phone_number,
-          avatarUrl: data.avatar_url,
+          fullName: data.full_name || authMeta.full_name || localExisting?.fullName || fullName,
+          phoneNumber: data.phone_number || authMeta.phone_number || localExisting?.phoneNumber || (storedUser?.id === userId ? storedUser.phoneNumber : undefined),
+          avatarUrl: data.avatar_url || authMeta.avatar_url || localExisting?.avatarUrl || (storedUser?.id === userId ? storedUser.avatarUrl : undefined),
           role,
           createdAt: data.created_at || new Date().toISOString(),
           updatedAt: data.updated_at,
@@ -221,24 +235,49 @@ export async function fetchUserProfile(
       }
 
       const defaultRole: UserRole = trimmedEmail === DEFAULT_ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user';
+      const resolvedPhone = authMeta.phone_number || localExisting?.phoneNumber || (storedUser?.id === userId ? storedUser.phoneNumber : undefined);
+      const resolvedAvatar = authMeta.avatar_url || localExisting?.avatarUrl || (storedUser?.id === userId ? storedUser.avatarUrl : undefined);
+
       const newProfile: UserProfile = {
         id: userId,
         email: trimmedEmail,
-        fullName: fullName || trimmedEmail.split('@')[0],
+        fullName: fullName || authMeta.full_name || trimmedEmail.split('@')[0],
+        phoneNumber: resolvedPhone,
+        avatarUrl: resolvedAvatar,
         role: defaultRole,
         createdAt: new Date().toISOString(),
       };
 
-      await client.from('profiles').upsert(
-        {
+      try {
+        const upsertPayload: Record<string, any> = {
           id: userId,
           email: trimmedEmail,
           full_name: newProfile.fullName,
           role: defaultRole,
           created_at: newProfile.createdAt,
-        },
-        { onConflict: 'id' }
-      );
+          updated_at: new Date().toISOString(),
+        };
+        if (resolvedPhone) upsertPayload.phone_number = resolvedPhone;
+        if (resolvedAvatar) upsertPayload.avatar_url = resolvedAvatar;
+
+        const { error: upsertErr } = await client.from('profiles').upsert(upsertPayload, { onConflict: 'id' });
+        if (upsertErr) {
+          // If custom columns don't exist yet, retry standard schema
+          await client.from('profiles').upsert(
+            {
+              id: userId,
+              email: trimmedEmail,
+              full_name: newProfile.fullName,
+              role: defaultRole,
+              created_at: newProfile.createdAt,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'id' }
+          );
+        }
+      } catch (upsertCatch) {
+        console.warn('Upsert fallback error:', upsertCatch);
+      }
 
       saveLocalProfile(newProfile);
       return { role: defaultRole, profile: newProfile };
@@ -247,11 +286,8 @@ export async function fetchUserProfile(
     }
   }
 
-  const localProfiles = getLocalProfiles();
-  const existing = localProfiles.find((p) => p.id === userId || p.email === trimmedEmail);
-
-  if (existing) {
-    return { role: existing.role, profile: existing };
+  if (localExisting) {
+    return { role: localExisting.role, profile: localExisting };
   }
 
   const defaultRole: UserRole = trimmedEmail === DEFAULT_ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user';
@@ -259,6 +295,8 @@ export async function fetchUserProfile(
     id: userId,
     email: trimmedEmail,
     fullName: fullName || trimmedEmail.split('@')[0],
+    phoneNumber: storedUser?.id === userId ? storedUser.phoneNumber : undefined,
+    avatarUrl: storedUser?.id === userId ? storedUser.avatarUrl : undefined,
     role: defaultRole,
     createdAt: new Date().toISOString(),
   };
@@ -354,22 +392,36 @@ export async function updateUserProfileData(
   const trimmedPhone = updates.phoneNumber !== undefined ? updates.phoneNumber.trim() : undefined;
   const avatarUrl = updates.avatarUrl !== undefined ? updates.avatarUrl : undefined;
 
+  let updateError: string | undefined = undefined;
+
   if (client) {
     try {
       const dbUpdates: Record<string, any> = {
+        id: userId,
         updated_at: new Date().toISOString(),
       };
       if (trimmedName !== undefined) dbUpdates.full_name = trimmedName;
       if (trimmedPhone !== undefined) dbUpdates.phone_number = trimmedPhone;
       if (avatarUrl !== undefined) dbUpdates.avatar_url = avatarUrl;
 
+      // Upsert into profiles table
       const { error: profileError } = await client
         .from('profiles')
-        .update(dbUpdates)
-        .eq('id', userId);
+        .upsert(dbUpdates, { onConflict: 'id' });
 
       if (profileError) {
-        console.warn('Profile update error:', profileError);
+        console.warn('Profile full upsert error, trying fallback:', profileError);
+        // If error was due to missing phone_number or avatar_url columns, retry with full_name only
+        const { error: fallbackErr } = await client
+          .from('profiles')
+          .update({
+            full_name: trimmedName,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userId);
+        if (fallbackErr) {
+          console.warn('Profile fallback update error:', fallbackErr);
+        }
       }
 
       // Also update auth user metadata if active session exists
@@ -377,7 +429,10 @@ export async function updateUserProfileData(
         const authData: Record<string, any> = {};
         if (trimmedName !== undefined) authData.full_name = trimmedName;
         if (trimmedPhone !== undefined) authData.phone_number = trimmedPhone;
-        if (avatarUrl !== undefined) authData.avatar_url = avatarUrl;
+        // Avoid putting very large base64 strings into auth metadata (auth service payload limits)
+        if (avatarUrl !== undefined && !avatarUrl.startsWith('data:image/') || (avatarUrl && avatarUrl.length < 8192)) {
+          authData.avatar_url = avatarUrl;
+        }
 
         await client.auth.updateUser({
           data: authData,
@@ -387,6 +442,7 @@ export async function updateUserProfileData(
       }
     } catch (err: any) {
       console.warn('Error updating profile in Supabase:', err);
+      updateError = err?.message;
     }
   }
 
@@ -510,6 +566,8 @@ export function storeLocalUser(user: UserSession): void {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
+      phoneNumber: user.phoneNumber,
+      avatarUrl: user.avatarUrl,
       role: user.role,
       createdAt: user.createdAt || new Date().toISOString(),
     });
@@ -726,12 +784,14 @@ export async function signInUser(
       return { user: null, error: 'Authentication failed.' };
     }
 
-    const { role } = await fetchUserProfile(data.user.id, trimmedEmail, data.user.user_metadata?.full_name);
+    const { role, profile } = await fetchUserProfile(data.user.id, trimmedEmail, data.user.user_metadata?.full_name);
 
     const sessionUser: UserSession = {
       id: data.user.id,
       email: data.user.email || trimmedEmail,
-      fullName: data.user.user_metadata?.full_name || trimmedEmail.split('@')[0],
+      fullName: profile?.fullName || data.user.user_metadata?.full_name || trimmedEmail.split('@')[0],
+      phoneNumber: profile?.phoneNumber || data.user.user_metadata?.phone_number,
+      avatarUrl: profile?.avatarUrl || data.user.user_metadata?.avatar_url,
       role,
       isDemo: false,
       createdAt: data.user.created_at,
@@ -806,11 +866,13 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
       if (targetUser) {
         const userEmail = targetUser.email || '';
         const fullName = targetUser.user_metadata?.full_name || targetUser.user_metadata?.name || userEmail.split('@')[0];
-        const { role } = await fetchUserProfile(targetUser.id, userEmail, fullName);
+        const { role, profile } = await fetchUserProfile(targetUser.id, userEmail, fullName);
         const sessionUser: UserSession = {
           id: targetUser.id,
           email: userEmail,
-          fullName,
+          fullName: profile?.fullName || fullName,
+          phoneNumber: profile?.phoneNumber || targetUser.user_metadata?.phone_number,
+          avatarUrl: profile?.avatarUrl || targetUser.user_metadata?.avatar_url,
           role,
           isDemo: false,
           createdAt: targetUser.created_at,
@@ -1784,10 +1846,16 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email TEXT NOT NULL,
     full_name TEXT,
+    phone_number TEXT,
+    avatar_url TEXT,
     role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+-- Ensure columns exist for existing database instances
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone_number TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
@@ -1805,11 +1873,13 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-    INSERT INTO public.profiles (id, email, full_name, role, created_at, updated_at)
+    INSERT INTO public.profiles (id, email, full_name, phone_number, avatar_url, role, created_at, updated_at)
     VALUES (
         NEW.id,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
+        NEW.raw_user_meta_data->>'phone_number',
+        NEW.raw_user_meta_data->>'avatar_url',
         CASE 
             WHEN LOWER(NEW.email) = 'manastraderstkp@gmail.com' THEN 'admin'
             ELSE 'user'
@@ -1819,7 +1889,9 @@ BEGIN
     )
     ON CONFLICT (id) DO UPDATE
     SET email = EXCLUDED.email,
-        full_name = EXCLUDED.full_name,
+        full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
+        phone_number = COALESCE(EXCLUDED.phone_number, public.profiles.phone_number),
+        avatar_url = COALESCE(EXCLUDED.avatar_url, public.profiles.avatar_url),
         updated_at = NOW();
     RETURN NEW;
 END;

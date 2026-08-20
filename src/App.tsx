@@ -239,12 +239,14 @@ export default function App() {
         } else if (session?.user) {
           const userEmail = session.user.email || '';
           const fullName = session.user.user_metadata?.full_name || session.user.user_metadata?.name || userEmail.split('@')[0];
-          // Fetch role dynamically from profiles table
-          const { role } = await fetchUserProfile(session.user.id, userEmail, fullName);
+          // Fetch role and profile dynamically from profiles table
+          const { role, profile } = await fetchUserProfile(session.user.id, userEmail, fullName);
           const sessionUser: UserSession = {
             id: session.user.id,
             email: userEmail,
-            fullName,
+            fullName: profile?.fullName || fullName,
+            phoneNumber: profile?.phoneNumber || session.user.user_metadata?.phone_number,
+            avatarUrl: profile?.avatarUrl || session.user.user_metadata?.avatar_url,
             role,
             isDemo: false,
             createdAt: session.user.created_at,

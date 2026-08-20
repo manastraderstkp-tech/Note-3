@@ -124,7 +124,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const maxDim = 320;
+          const maxDim = 200;
           let width = img.width;
           let height = img.height;
 
@@ -145,10 +145,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.drawImage(img, 0, 0, width, height);
-            const optimizedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+            const optimizedBase64 = canvas.toDataURL('image/jpeg', 0.8);
             setAvatarUrl(optimizedBase64);
             setShowAvatarPicker(false);
-            onShowToast('New profile photo selected. Click "Save Profile" to keep changes.', 'info');
+            onShowToast('Profile photo selected. Click "Save Profile" to save changes.', 'info');
           } else {
             setAvatarUrl(result);
             setShowAvatarPicker(false);

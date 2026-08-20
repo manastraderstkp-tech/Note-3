@@ -54,6 +54,7 @@ import {
 import {
   playAlertSound,
   getStoredNotificationSettings,
+  unlockAudioContext,
 } from './lib/soundAlerts';
 import {
   triggerNotificationAlert,
@@ -103,6 +104,25 @@ export default function App() {
       localStorage.setItem('workspace_theme', 'light');
     }
   }, [isDark]);
+
+  // Unlock AudioContext on first interaction
+  useEffect(() => {
+    const handleInteraction = () => {
+      unlockAudioContext();
+      document.removeEventListener('click', handleInteraction);
+      document.removeEventListener('keydown', handleInteraction);
+      document.removeEventListener('touchstart', handleInteraction);
+    };
+    document.addEventListener('click', handleInteraction);
+    document.addEventListener('keydown', handleInteraction);
+    document.addEventListener('touchstart', handleInteraction);
+    
+    return () => {
+      document.removeEventListener('click', handleInteraction);
+      document.removeEventListener('keydown', handleInteraction);
+      document.removeEventListener('touchstart', handleInteraction);
+    };
+  }, []);
 
   const toggleTheme = () => {
     setIsDark((prev) => !prev);
@@ -290,6 +310,7 @@ export default function App() {
 
   useEffect(() => {
     if (currentUser) {
+      setIsAuthModalOpen(false);
       loadUserData(currentUser);
     } else {
       setNotes([]);

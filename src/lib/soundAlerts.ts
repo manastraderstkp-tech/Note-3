@@ -57,6 +57,13 @@ function getAudioContext(): AudioContext | null {
   return audioCtx;
 }
 
+export function unlockAudioContext() {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume().catch(() => {});
+  }
+}
+
 /**
  * Play a synthesized sound tone using the Web Audio API
  */

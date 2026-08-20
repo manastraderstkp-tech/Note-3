@@ -104,14 +104,6 @@ export const NoteModal: React.FC<NoteModalProps> = ({
     }
   }, [initialNote, isOpen]);
 
-  // Auto-resize textarea
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
-    }
-  }, [content]);
-
   if (!isOpen) return null;
 
   const handleApplyPreset = (minutesFromNow: number) => {
@@ -473,13 +465,13 @@ export const NoteModal: React.FC<NoteModalProps> = ({
           </div>
 
           {/* Editor Textarea */}
-          <div className="mt-6">
+          <div className="mt-6 flex-1 flex">
             <textarea
               ref={textareaRef}
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder="Press '/' for commands..."
-              className="w-full resize-none overflow-hidden bg-transparent text-lg leading-relaxed text-slate-700 placeholder-slate-300 outline-none dark:text-slate-300 dark:placeholder-slate-600 min-h-[400px]"
+              className="w-full resize-none overflow-y-auto bg-transparent text-lg leading-relaxed text-slate-700 placeholder-slate-300 outline-none dark:text-slate-300 dark:placeholder-slate-600 min-h-[400px] flex-1"
             />
           </div>
 

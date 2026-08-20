@@ -725,12 +725,12 @@ export async function syncFetchNotes(userId: string): Promise<{ notes: Note[]; i
           content: item.content || '',
           tags: Array.isArray(item.tags) ? item.tags : [],
           category: item.category || 'General',
+          notifyAt: item.notify_at || undefined,
+          notified: Boolean(item.notified),
           colorScheme: item.color_scheme || 'default',
           imageUrl: item.image_url || undefined,
           attachments: item.attachments || [],
           isPinned: Boolean(item.is_pinned),
-          notifyAt: item.notify_at || undefined,
-          notified: Boolean(item.notified),
           createdAt: item.created_at || new Date().toISOString(),
           updatedAt: item.updated_at || new Date().toISOString(),
         }));
@@ -792,12 +792,12 @@ export async function syncSaveNote(
           content: res.data.content || '',
           tags: Array.isArray(res.data.tags) ? res.data.tags : [],
           category: res.data.category || 'General',
+          notifyAt: res.data.notify_at || undefined,
+          notified: Boolean(res.data.notified),
           colorScheme: res.data.color_scheme || 'default',
           imageUrl: res.data.image_url || undefined,
           attachments: res.data.attachments || [],
           isPinned: Boolean(res.data.is_pinned),
-          notifyAt: res.data.notify_at || undefined,
-          notified: Boolean(res.data.notified),
           createdAt: res.data.created_at || note.createdAt,
           updatedAt: res.data.updated_at || note.updatedAt,
         };
@@ -882,6 +882,8 @@ export async function syncFetchTodos(userId: string): Promise<{ todos: TodoTask[
           priority: item.priority || 'medium',
           dueDate: item.due_date || new Date().toISOString().split('T')[0],
           category: item.category || 'General',
+          notifyAt: item.notify_at || undefined,
+          notified: Boolean(item.notified),
           createdAt: item.created_at || new Date().toISOString(),
         }));
 
@@ -925,10 +927,17 @@ export async function syncSaveTodo(
         priority: todo.priority || 'medium',
         due_date: todo.dueDate || null,
         category: todo.category || 'General',
+        notify_at: todo.notifyAt || null,
+        notified: Boolean(todo.notified),
         created_at: todo.createdAt || new Date().toISOString(),
       };
 
-      const res = await client.from('todos').upsert(payload, { onConflict: 'id' }).select().single();
+      let res = await client.from('todos').upsert(payload, { onConflict: 'id' }).select().single();
+      if (res.error && (res.error.message.includes('notify_at') || res.error.code === '42703')) {
+        delete payload.notify_at;
+        delete payload.notified;
+        res = await client.from('todos').upsert(payload, { onConflict: 'id' }).select().single();
+      }
 
       if (!res.error && res.data) {
         const savedTodo: TodoTask = {
@@ -939,6 +948,8 @@ export async function syncSaveTodo(
           priority: res.data.priority || 'medium',
           dueDate: res.data.due_date || todo.dueDate,
           category: res.data.category || 'General',
+          notifyAt: res.data.notify_at || undefined,
+          notified: Boolean(res.data.notified),
           createdAt: res.data.created_at || todo.createdAt,
         };
 
@@ -1697,6 +1708,8 @@ CREATE TABLE IF NOT EXISTS public.notes (
     tags TEXT[] DEFAULT '{}',
     color_scheme TEXT DEFAULT 'default',
     category TEXT DEFAULT 'General',
+    notify_at TIMESTAMPTZ,
+    notified BOOLEAN DEFAULT FALSE,
     image_url TEXT,
     attachments JSONB DEFAULT '[]'::jsonb,
     is_pinned BOOLEAN DEFAULT FALSE,
@@ -1738,12 +1751,18 @@ CREATE TABLE IF NOT EXISTS public.todos (
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
     due_date TEXT,
     category TEXT DEFAULT 'General',
+    notify_at TIMESTAMPTZ,
+    notified BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
 ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Todos select policy" ON public.todos;
+
+-- Ensure safe migration
+ALTER TABLE public.todos ADD COLUMN IF NOT EXISTS notify_at TIMESTAMPTZ;
+ALTER TABLE public.todos ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT FALSE;
 DROP POLICY IF EXISTS "Todos insert policy" ON public.todos;
 DROP POLICY IF EXISTS "Todos update policy" ON public.todos;
 DROP POLICY IF EXISTS "Todos delete policy" ON public.todos;
@@ -1770,6 +1789,8 @@ CREATE TABLE IF NOT EXISTS public.work_logs (
     start_time TEXT,
     end_time TEXT,
     category TEXT DEFAULT 'General',
+    notify_at TIMESTAMPTZ,
+    notified BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 

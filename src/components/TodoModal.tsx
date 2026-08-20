@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { requestBrowserNotificationPermission } from "../lib/notifications";
 import { X, Calendar, CheckCircle, Tag, AlertCircle, Bell, Clock, Loader2, ChevronDown, Trash2 } from 'lucide-react';
 import { TodoTask, TaskStatus, TaskPriority } from '../types';
 
@@ -350,8 +351,10 @@ export const TodoModal: React.FC<TodoModalProps> = ({
                 onClick={() => {
                   if (!hasReminder && !notifyAt) {
                     handleApplyPreset(60);
+                    requestBrowserNotificationPermission();
                   } else {
                     setHasReminder(!hasReminder);
+                    if (!hasReminder) requestBrowserNotificationPermission();
                   }
                 }}
                 className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold transition ${

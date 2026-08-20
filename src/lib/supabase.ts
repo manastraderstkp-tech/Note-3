@@ -341,6 +341,135 @@ export async function updateUserRoleInDb(
   return { success: true };
 }
 
+export async function updateUserProfileData(
+  userId: string,
+  updates: { fullName?: string }
+): Promise<{ success: boolean; user?: UserSession; error?: string }> {
+  const client = getSupabase();
+  const trimmedName = updates.fullName?.trim() || '';
+
+  if (client) {
+    try {
+      const { error: profileError } = await client
+        .from('profiles')
+        .update({
+          full_name: trimmedName,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+
+      if (profileError) {
+        console.warn('Profile update error:', profileError);
+      }
+
+      // Also update auth user metadata if active session exists
+      try {
+        await client.auth.updateUser({
+          data: { full_name: trimmedName },
+        });
+      } catch (authErr) {
+        console.warn('Auth updateUser error:', authErr);
+      }
+    } catch (err: any) {
+      console.warn('Error updating profile in Supabase:', err);
+    }
+  }
+
+  // Update local profiles list
+  const localProfiles = getLocalProfiles();
+  const index = localProfiles.findIndex((p) => p.id === userId);
+  if (index !== -1) {
+    localProfiles[index].fullName = trimmedName;
+    localProfiles[index].updatedAt = new Date().toISOString();
+    try {
+      localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(localProfiles));
+    } catch {
+      // ignore
+    }
+  }
+
+  // Update current user session
+  const currentUser = getCurrentStoredUser();
+  if (currentUser && currentUser.id === userId) {
+    currentUser.fullName = trimmedName;
+    storeLocalUser(currentUser);
+    return { success: true, user: currentUser };
+  }
+
+  return { success: true };
+}
+
+export async function updateUserPassword(
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabase();
+  if (!client) {
+    return { success: false, error: 'Supabase client is not available.' };
+  }
+
+  try {
+    const { error } = await client.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) {
+      return { success: false, error: formatSupabaseAuthError(error, error.message) };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: formatSupabaseAuthError(err, 'Failed to change password.') };
+  }
+}
+
+export async function deleteUserAccount(
+  userId: string
+): Promise<{ success: boolean; error?: string }> {
+  const client = getSupabase();
+
+  if (client) {
+    try {
+      // Delete user data from all tables
+      await client.from('notes').delete().eq('user_id', userId);
+      await client.from('todos').delete().eq('user_id', userId);
+      await client.from('work_logs').delete().eq('user_id', userId);
+      await client.from('files').delete().eq('user_id', userId);
+      await client.from('folders').delete().eq('user_id', userId);
+      await client.from('share_portfolio').delete().eq('user_id', userId);
+      await client.from('share_trades').delete().eq('user_id', userId);
+      await client.from('share_watchlist').delete().eq('user_id', userId);
+      await client.from('profiles').delete().eq('id', userId);
+
+      // Attempt to sign out
+      await client.auth.signOut();
+    } catch (err: any) {
+      console.warn('Error deleting user records in Supabase:', err);
+    }
+  }
+
+  // Clear user-specific localStorage keys
+  try {
+    localStorage.removeItem(`ws_notes_${userId}`);
+    localStorage.removeItem(`ws_todos_${userId}`);
+    localStorage.removeItem(`ws_worklogs_${userId}`);
+    localStorage.removeItem(`ws_folders_${userId}`);
+    localStorage.removeItem(`ws_files_${userId}`);
+    localStorage.removeItem(`ws_trash_${userId}`);
+    localStorage.removeItem(`ws_sharemarket_portfolio_${userId}`);
+    localStorage.removeItem(`ws_sharemarket_trades_${userId}`);
+    localStorage.removeItem(`ws_sharemarket_watchlist_${userId}`);
+    localStorage.removeItem(STORAGE_KEY_USER);
+
+    // Remove from local profiles
+    const profiles = getLocalProfiles().filter((p) => p.id !== userId);
+    localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
+  } catch (e) {
+    console.warn('Error clearing local user cache:', e);
+  }
+
+  return { success: true };
+}
+
 // -----------------------------------------------------------------------------
 // Authentication Operations
 // -----------------------------------------------------------------------------

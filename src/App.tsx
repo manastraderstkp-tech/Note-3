@@ -24,6 +24,7 @@ import { PersonalSpaceView } from './components/PersonalSpaceView';
 import { FileManager } from './components/FileManager';
 import { ShareMarketView } from './components/ShareMarketView';
 import { TrashSection } from './components/TrashSection';
+import { AccountView } from './components/AccountView';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
 import { Note, TodoTask, WorkLog, Folder, UserFile, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole, TrashItem, TrashItemType } from './types';
 import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from './data/initialData';
@@ -35,6 +36,9 @@ import {
   getStoredSupabaseConfig,
   fetchUserProfile,
   storeLocalUser,
+  updateUserProfileData,
+  updateUserPassword,
+  deleteUserAccount,
   syncFetchNotes,
   syncSaveNote,
   syncDeleteNote,
@@ -551,6 +555,37 @@ export default function App() {
   const handleSignOut = async () => {
     await signOutUser();
     setCurrentUser(null);
+  };
+
+  const handleUpdateProfile = async (updated: { fullName: string }) => {
+    if (!currentUser) return { success: false, error: 'No active user session found.' };
+    const res = await updateUserProfileData(currentUser.id, updated);
+    if (res.success && res.user) {
+      setCurrentUser(res.user);
+    } else if (res.success) {
+      setCurrentUser({ ...currentUser, fullName: updated.fullName });
+    }
+    return res;
+  };
+
+  const handleChangePassword = async (newPassword: string) => {
+    return await updateUserPassword(newPassword);
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!currentUser) return { success: false, error: 'No active user session found.' };
+    const res = await deleteUserAccount(currentUser.id);
+    if (res.success) {
+      setNotes([]);
+      setTasks([]);
+      setWorklogs([]);
+      setFolders([]);
+      setFiles([]);
+      setTrashItems([]);
+      setCurrentUser(null);
+      setActiveSection('dashboard');
+    }
+    return res;
   };
 
   const handleOpenAuth = (mode: 'signin' | 'signup' = 'signin') => {
@@ -1134,6 +1169,20 @@ export default function App() {
                 onRestore={handleRestoreItem}
                 onPermanentDelete={handlePermanentDelete}
                 onEmptyTrash={handleEmptyTrash}
+              />
+            )}
+
+            {activeSection === 'account' && (
+              <AccountView
+                currentUser={currentUser}
+                stats={stats}
+                onUpdateProfile={handleUpdateProfile}
+                onChangePassword={handleChangePassword}
+                onDeleteAccount={handleDeleteAccount}
+                onSignOut={handleSignOut}
+                onOpenAuth={handleOpenAuth}
+                onOpenSqlModal={() => setIsSqlModalOpen(true)}
+                onShowToast={showToast}
               />
             )}
           </div>

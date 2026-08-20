@@ -1,4 +1,4 @@
-export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket' | 'trash';
+export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket' | 'trash' | 'account';
 
 export type UserRole = 'admin' | 'user';
 

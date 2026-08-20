@@ -565,6 +565,18 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 <div className="py-1 space-y-0.5">
+                  <button
+                    id="btn-menu-my-account"
+                    onClick={() => {
+                      onNavigate('account');
+                      setShowProfileMenu(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+                  >
+                    <User className="h-3.5 w-3.5 text-purple-500" />
+                    <span>My Account & Profile</span>
+                  </button>
+
                   {/* Admin exclusive user role management */}
                   {currentUser.role === 'admin' && onOpenUserRolesModal && (
                     <button

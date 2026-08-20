@@ -16,6 +16,7 @@ import {
   KeyRound,
   ShieldCheck,
   UserCheck,
+  User,
   Volume2,
   FileDown,
   Crown,
@@ -116,6 +117,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Trash2,
       badge: null,
       color: 'text-slate-500',
+    },
+    {
+      id: 'account' as NavSection,
+      label: 'Account',
+      icon: User,
+      badge: null,
+      color: 'text-purple-500',
     },
   ];
 

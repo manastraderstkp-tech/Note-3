@@ -22,7 +22,8 @@ import {
   Crown,
   LogOut,
   Trash2,
-  Receipt
+  Receipt,
+  MessageSquare
 } from 'lucide-react';
 import { NavSection, MetricStats, UserSession } from '../types';
 import { getStoredSupabaseConfig } from '../lib/supabase';
@@ -118,6 +119,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Receipt,
       badge: null,
       color: 'text-emerald-500',
+    },
+    {
+      id: 'chat' as NavSection,
+      label: 'Workspace Chat',
+      icon: MessageSquare,
+      badge: 'Live',
+      badgeColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-bold',
+      color: 'text-indigo-500',
     },
     {
       id: 'trash' as NavSection,

@@ -24,6 +24,7 @@ import { PersonalSpaceView } from './components/PersonalSpaceView';
 import { FileManager } from './components/FileManager';
 import { ShareMarketView } from './components/ShareMarketView';
 import { TransactionsView } from './components/TransactionsView';
+import { ChatView } from './components/ChatView';
 import { TrashSection } from './components/TrashSection';
 import { AccountView } from './components/AccountView';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
@@ -1176,6 +1177,14 @@ export default function App() {
                 userId={currentUser?.id || 'demo-user'}
                 onShowToast={showToast}
                 searchQuery={searchQuery}
+              />
+            )}
+
+            {activeSection === 'chat' && (
+              <ChatView
+                currentUser={currentUser}
+                onShowToast={showToast}
+                onOpenAuth={handleOpenAuth}
               />
             )}
 

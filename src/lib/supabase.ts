@@ -13,6 +13,9 @@ import {
   UserSession,
   UserRole,
   UserProfile,
+  ChatMessage,
+  ChatUser,
+  MessageReaction,
 } from '../types';
 import {
   SUPABASE_URL,
@@ -2006,6 +2009,563 @@ export async function syncDownloadFile(file: {
 }
 
 // -----------------------------------------------------------------------------
+// Real-time Workspace Chat System (Direct 1-on-1 & Team Channel)
+// -----------------------------------------------------------------------------
+
+export const STORAGE_KEY_CHAT_MESSAGES = 'workspace_chat_messages';
+
+export async function fetchWorkspaceChatUsers(): Promise<ChatUser[]> {
+  const client = getSupabase();
+  const profilesMap = new Map<string, ChatUser>();
+
+  // 1. Check profiles in Supabase
+  if (client) {
+    try {
+      const { data, error } = await client
+        .from('profiles')
+        .select('id, email, full_name, phone_number, avatar_url, role, updated_at')
+        .order('created_at', { ascending: true });
+
+      if (!error && data) {
+        data.forEach((p: any) => {
+          profilesMap.set(p.id, {
+            id: p.id,
+            email: p.email,
+            fullName: p.full_name || p.email.split('@')[0],
+            phoneNumber: p.phone_number,
+            avatarUrl: p.avatar_url,
+            role: (p.role as UserRole) || 'user',
+            isOnline: false,
+            lastSeen: p.updated_at,
+          });
+        });
+      }
+    } catch (e) {
+      console.warn('Error fetching profiles for chat:', e);
+    }
+  }
+
+  // 2. Supplement / fallback with local stored profiles
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PROFILES);
+    if (raw) {
+      const localProfiles: UserProfile[] = JSON.parse(raw);
+      localProfiles.forEach((p) => {
+        if (!profilesMap.has(p.id)) {
+          profilesMap.set(p.id, {
+            id: p.id,
+            email: p.email,
+            fullName: p.fullName || p.email.split('@')[0],
+            phoneNumber: p.phoneNumber,
+            avatarUrl: p.avatarUrl,
+            role: p.role,
+            isOnline: false,
+            lastSeen: p.updatedAt,
+          });
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('Error reading local profiles for chat:', e);
+  }
+
+  return Array.from(profilesMap.values());
+}
+
+export async function fetchChatMessages(
+  currentUserId: string,
+  targetRecipientId: string = 'general'
+): Promise<{ messages: ChatMessage[]; isCloud: boolean }> {
+  const client = getSupabase();
+
+  if (client) {
+    try {
+      let query = client
+        .from('chat_messages')
+        .select('*')
+        .order('created_at', { ascending: true })
+        .limit(300);
+
+      if (targetRecipientId === 'general') {
+        query = query.or('receiver_id.eq.general,receiver_id.is.null');
+      } else {
+        // Direct messages between current user and target user
+        query = query.or(
+          `and(sender_id.eq.${currentUserId},receiver_id.eq.${targetRecipientId}),and(sender_id.eq.${targetRecipientId},receiver_id.eq.${currentUserId})`
+        );
+      }
+
+      const { data, error } = await query;
+
+      if (!error && data) {
+        const mapped: ChatMessage[] = data.map((row: any) => ({
+          id: row.id,
+          senderId: row.sender_id,
+          senderName: row.sender_name || 'User',
+          senderEmail: row.sender_email || '',
+          senderAvatar: row.sender_avatar,
+          senderRole: (row.sender_role as UserRole) || 'user',
+          receiverId: row.receiver_id || 'general',
+          content: row.content || '',
+          attachmentUrl: row.attachment_url,
+          attachmentName: row.attachment_name,
+          attachmentType: row.attachment_type as ('image' | 'file' | undefined),
+          replyToId: row.reply_to_id,
+          replyToSnippet: row.reply_to_snippet,
+          replyToSender: row.reply_to_sender,
+          reactions: Array.isArray(row.reactions) ? row.reactions : [],
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          isDeleted: row.is_deleted || false,
+        }));
+
+        // Cache messages locally
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
+          const allCached: ChatMessage[] = raw ? JSON.parse(raw) : [];
+          const otherChannelMessages = allCached.filter((m) => {
+            if (targetRecipientId === 'general') {
+              return m.receiverId && m.receiverId !== 'general';
+            }
+            return !(
+              (m.senderId === currentUserId && m.receiverId === targetRecipientId) ||
+              (m.senderId === targetRecipientId && m.receiverId === currentUserId)
+            );
+          });
+          localStorage.setItem(
+            STORAGE_KEY_CHAT_MESSAGES,
+            JSON.stringify([...otherChannelMessages, ...mapped])
+          );
+        } catch (e) {
+          console.warn('Error caching chat messages:', e);
+        }
+
+        return { messages: mapped, isCloud: true };
+      }
+    } catch (e) {
+      console.warn('Error fetching cloud chat messages:', e);
+    }
+  }
+
+  // Fallback to local cache
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
+    if (raw) {
+      const allCached: ChatMessage[] = JSON.parse(raw);
+      const filtered = allCached.filter((m) => {
+        if (targetRecipientId === 'general') {
+          return !m.receiverId || m.receiverId === 'general';
+        }
+        return (
+          (m.senderId === currentUserId && m.receiverId === targetRecipientId) ||
+          (m.senderId === targetRecipientId && m.receiverId === currentUserId)
+        );
+      });
+      return { messages: filtered, isCloud: false };
+    }
+  } catch (e) {
+    console.warn('Error reading local chat messages cache:', e);
+  }
+
+  return { messages: [], isCloud: false };
+}
+
+export async function sendChatMessage(
+  message: ChatMessage
+): Promise<{ data: ChatMessage | null; error: string | null }> {
+  const client = getSupabase();
+
+  // Save to local cache first (Optimistic)
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
+    const list: ChatMessage[] = raw ? JSON.parse(raw) : [];
+    const exists = list.some((m) => m.id === message.id);
+    if (!exists) {
+      list.push(message);
+      localStorage.setItem(STORAGE_KEY_CHAT_MESSAGES, JSON.stringify(list));
+    }
+  } catch (e) {
+    console.warn('Error locally caching sent chat message:', e);
+  }
+
+  if (client) {
+    try {
+      const dbRow: Record<string, any> = {
+        id: message.id,
+        sender_id: message.senderId,
+        sender_name: message.senderName,
+        sender_email: message.senderEmail,
+        sender_avatar: message.senderAvatar || null,
+        sender_role: message.senderRole || 'user',
+        receiver_id: message.receiverId || 'general',
+        content: message.content,
+        attachment_url: message.attachmentUrl || null,
+        attachment_name: message.attachmentName || null,
+        attachment_type: message.attachmentType || null,
+        reply_to_id: message.replyToId || null,
+        reply_to_snippet: message.replyToSnippet || null,
+        reply_to_sender: message.replyToSender || null,
+        reactions: message.reactions || [],
+        is_deleted: false,
+        created_at: message.createdAt || new Date().toISOString(),
+        updated_at: message.updatedAt || new Date().toISOString(),
+      };
+
+      const { data, error } = await client
+        .from('chat_messages')
+        .insert(dbRow)
+        .select()
+        .single();
+
+      if (error) {
+        console.warn('Supabase chat insert error:', error);
+        return { data: message, error: error.message };
+      }
+
+      if (data) {
+        const saved: ChatMessage = {
+          id: data.id,
+          senderId: data.sender_id,
+          senderName: data.sender_name,
+          senderEmail: data.sender_email,
+          senderAvatar: data.sender_avatar,
+          senderRole: (data.sender_role as UserRole) || 'user',
+          receiverId: data.receiver_id,
+          content: data.content,
+          attachmentUrl: data.attachment_url,
+          attachmentName: data.attachment_name,
+          attachmentType: data.attachment_type,
+          replyToId: data.reply_to_id,
+          replyToSnippet: data.reply_to_snippet,
+          replyToSender: data.reply_to_sender,
+          reactions: Array.isArray(data.reactions) ? data.reactions : [],
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+          isDeleted: data.is_deleted,
+        };
+        return { data: saved, error: null };
+      }
+    } catch (e: any) {
+      console.warn('Failed to insert chat message in Supabase:', e);
+      return { data: message, error: e?.message || 'Chat insert error' };
+    }
+  }
+
+  return { data: message, error: null };
+}
+
+export async function deleteChatMessage(
+  messageId: string,
+  currentUserId: string
+): Promise<{ success: boolean; error: string | null }> {
+  const client = getSupabase();
+
+  // Remove from local cache
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
+    if (raw) {
+      const list: ChatMessage[] = JSON.parse(raw);
+      const updated = list.filter((m) => m.id !== messageId);
+      localStorage.setItem(STORAGE_KEY_CHAT_MESSAGES, JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.warn('Error deleting message from local cache:', e);
+  }
+
+  if (client) {
+    try {
+      const { error } = await client
+        .from('chat_messages')
+        .delete()
+        .eq('id', messageId);
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Delete message failed' };
+    }
+  }
+
+  return { success: true, error: null };
+}
+
+export async function toggleChatMessageReaction(
+  messageId: string,
+  emoji: string,
+  currentUserId: string
+): Promise<{ success: boolean; reactions?: MessageReaction[]; error?: string }> {
+  const client = getSupabase();
+
+  let updatedReactions: MessageReaction[] = [];
+
+  // Update in local cache
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
+    if (raw) {
+      const list: ChatMessage[] = JSON.parse(raw);
+      const msg = list.find((m) => m.id === messageId);
+      if (msg) {
+        const reactions = msg.reactions ? [...msg.reactions] : [];
+        const existingIdx = reactions.findIndex((r) => r.emoji === emoji);
+
+        if (existingIdx !== -1) {
+          const r = reactions[existingIdx];
+          const hasUser = r.userIds.includes(currentUserId);
+          if (hasUser) {
+            r.userIds = r.userIds.filter((uid) => uid !== currentUserId);
+            r.count = r.userIds.length;
+            if (r.count === 0) {
+              reactions.splice(existingIdx, 1);
+            }
+          } else {
+            r.userIds.push(currentUserId);
+            r.count = r.userIds.length;
+          }
+        } else {
+          reactions.push({
+            emoji,
+            count: 1,
+            userIds: [currentUserId],
+          });
+        }
+
+        msg.reactions = reactions;
+        updatedReactions = reactions;
+        localStorage.setItem(STORAGE_KEY_CHAT_MESSAGES, JSON.stringify(list));
+      }
+    }
+  } catch (e) {
+    console.warn('Error toggling reaction locally:', e);
+  }
+
+  if (client) {
+    try {
+      // Fetch latest message reactions from Supabase
+      const { data: currentMsg } = await client
+        .from('chat_messages')
+        .select('reactions')
+        .eq('id', messageId)
+        .single();
+
+      let reactions: MessageReaction[] = Array.isArray(currentMsg?.reactions)
+        ? currentMsg.reactions
+        : updatedReactions;
+
+      const existingIdx = reactions.findIndex((r) => r.emoji === emoji);
+      if (existingIdx !== -1) {
+        const r = { ...reactions[existingIdx] };
+        const hasUser = r.userIds.includes(currentUserId);
+        if (hasUser) {
+          r.userIds = r.userIds.filter((uid) => uid !== currentUserId);
+          r.count = r.userIds.length;
+          if (r.count === 0) {
+            reactions.splice(existingIdx, 1);
+          } else {
+            reactions[existingIdx] = r;
+          }
+        } else {
+          r.userIds = [...r.userIds, currentUserId];
+          r.count = r.userIds.length;
+          reactions[existingIdx] = r;
+        }
+      } else {
+        reactions.push({
+          emoji,
+          count: 1,
+          userIds: [currentUserId],
+        });
+      }
+
+      await client
+        .from('chat_messages')
+        .update({ reactions, updated_at: new Date().toISOString() })
+        .eq('id', messageId);
+
+      return { success: true, reactions };
+    } catch (e: any) {
+      console.warn('Error saving reaction to Supabase:', e);
+      return { success: true, reactions: updatedReactions };
+    }
+  }
+
+  return { success: true, reactions: updatedReactions };
+}
+
+export async function uploadChatAttachment(
+  file: File,
+  currentUserId: string
+): Promise<{ publicUrl: string | null; fileName: string; fileType: 'image' | 'file'; error: string | null }> {
+  const client = getSupabase();
+  const isImage = file.type.startsWith('image/');
+  const fileType: 'image' | 'file' = isImage ? 'image' : 'file';
+
+  if (!client) {
+    const localUrl = URL.createObjectURL(file);
+    return { publicUrl: localUrl, fileName: file.name, fileType, error: null };
+  }
+
+  try {
+    const timestamp = Date.now();
+    const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `chat_${currentUserId}/${timestamp}_${cleanName}`;
+
+    // Upload to user_files bucket
+    const { error: uploadErr } = await client.storage
+      .from('user_files')
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    if (uploadErr) {
+      console.warn('Chat upload to user_files bucket failed, trying avatars:', uploadErr);
+      const { error: fallbackErr } = await client.storage
+        .from('avatars')
+        .upload(storagePath, file, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (fallbackErr) {
+        return { publicUrl: null, fileName: file.name, fileType, error: fallbackErr.message };
+      }
+
+      const { data: urlData } = client.storage.from('avatars').getPublicUrl(storagePath);
+      return { publicUrl: urlData?.publicUrl || null, fileName: file.name, fileType, error: null };
+    }
+
+    const { data: urlData } = client.storage.from('user_files').getPublicUrl(storagePath);
+    return { publicUrl: urlData?.publicUrl || null, fileName: file.name, fileType, error: null };
+  } catch (err: any) {
+    console.error('Error uploading chat attachment:', err);
+    return { publicUrl: null, fileName: file.name, fileType, error: err?.message || 'Upload failed' };
+  }
+}
+
+export function subscribeToWorkspaceChat(
+  onInsert: (message: ChatMessage) => void,
+  onUpdate: (message: ChatMessage) => void,
+  onDelete: (messageId: string) => void,
+  onPresenceUpdate?: (onlineUserIds: string[]) => void,
+  currentUserSession?: UserSession | null
+): () => void {
+  const client = getSupabase();
+  if (!client) {
+    return () => {};
+  }
+
+  try {
+    const channelName = 'workspace_realtime_chat';
+    const channel = client.channel(channelName, {
+      config: {
+        presence: {
+          key: currentUserSession?.id || 'guest',
+        },
+      },
+    });
+
+    // 1. Listen for Database postgres_changes on chat_messages table
+    channel
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'chat_messages' },
+        (payload: any) => {
+          if (payload.new) {
+            const row = payload.new;
+            const msg: ChatMessage = {
+              id: row.id,
+              senderId: row.sender_id,
+              senderName: row.sender_name || 'User',
+              senderEmail: row.sender_email || '',
+              senderAvatar: row.sender_avatar,
+              senderRole: (row.sender_role as UserRole) || 'user',
+              receiverId: row.receiver_id || 'general',
+              content: row.content || '',
+              attachmentUrl: row.attachment_url,
+              attachmentName: row.attachment_name,
+              attachmentType: row.attachment_type,
+              replyToId: row.reply_to_id,
+              replyToSnippet: row.reply_to_snippet,
+              replyToSender: row.reply_to_sender,
+              reactions: Array.isArray(row.reactions) ? row.reactions : [],
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+              isDeleted: row.is_deleted || false,
+            };
+            onInsert(msg);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'chat_messages' },
+        (payload: any) => {
+          if (payload.new) {
+            const row = payload.new;
+            const msg: ChatMessage = {
+              id: row.id,
+              senderId: row.sender_id,
+              senderName: row.sender_name || 'User',
+              senderEmail: row.sender_email || '',
+              senderAvatar: row.sender_avatar,
+              senderRole: (row.sender_role as UserRole) || 'user',
+              receiverId: row.receiver_id || 'general',
+              content: row.content || '',
+              attachmentUrl: row.attachment_url,
+              attachmentName: row.attachment_name,
+              attachmentType: row.attachment_type,
+              replyToId: row.reply_to_id,
+              replyToSnippet: row.reply_to_snippet,
+              replyToSender: row.reply_to_sender,
+              reactions: Array.isArray(row.reactions) ? row.reactions : [],
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+              isDeleted: row.is_deleted || false,
+            };
+            onUpdate(msg);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'chat_messages' },
+        (payload: any) => {
+          if (payload.old && payload.old.id) {
+            onDelete(payload.old.id);
+          }
+        }
+      );
+
+    // 2. Listen to Presence (Track active users)
+    if (onPresenceUpdate) {
+      channel.on('presence', { event: 'sync' }, () => {
+        const presenceState = channel.presenceState();
+        const activeIds = Object.keys(presenceState);
+        onPresenceUpdate(activeIds);
+      });
+    }
+
+    channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED' && currentUserSession?.id) {
+        await channel.track({
+          userId: currentUserSession.id,
+          userName: currentUserSession.fullName || currentUserSession.email,
+          onlineAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    return () => {
+      channel.unsubscribe();
+    };
+  } catch (err) {
+    console.warn('Error establishing realtime chat subscription:', err);
+    return () => {};
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Unified SQL Schema & RLS Policies
 // -----------------------------------------------------------------------------
 
@@ -2345,7 +2905,77 @@ CREATE POLICY "Avatar User Insert" ON storage.objects FOR INSERT WITH CHECK ((bu
 CREATE POLICY "Avatar User Update" ON storage.objects FOR UPDATE USING ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
 CREATE POLICY "Avatar User Delete" ON storage.objects FOR DELETE USING ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
 
--- 8. Ensure default admin role
+-- 8. CHAT MESSAGES TABLE (Real-time Team & 1-on-1 Chat)
+CREATE TABLE IF NOT EXISTS public.chat_messages (
+    id TEXT PRIMARY KEY,
+    sender_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    sender_name TEXT NOT NULL,
+    sender_email TEXT NOT NULL,
+    sender_avatar TEXT,
+    sender_role TEXT DEFAULT 'user',
+    receiver_id TEXT DEFAULT 'general',
+    content TEXT NOT NULL,
+    attachment_url TEXT,
+    attachment_name TEXT,
+    attachment_type TEXT,
+    reply_to_id TEXT,
+    reply_to_snippet TEXT,
+    reply_to_sender TEXT,
+    reactions JSONB DEFAULT '[]'::jsonb,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_receiver ON public.chat_messages(receiver_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_sender ON public.chat_messages(sender_id, created_at);
+
+ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Chat select policy" ON public.chat_messages;
+DROP POLICY IF EXISTS "Chat insert policy" ON public.chat_messages;
+DROP POLICY IF EXISTS "Chat update policy" ON public.chat_messages;
+DROP POLICY IF EXISTS "Chat delete policy" ON public.chat_messages;
+
+CREATE POLICY "Chat select policy" ON public.chat_messages FOR SELECT 
+USING (
+    receiver_id = 'general' OR 
+    receiver_id IS NULL OR 
+    sender_id = auth.uid() OR 
+    receiver_id = auth.uid()::text OR 
+    public.is_admin()
+);
+
+CREATE POLICY "Chat insert policy" ON public.chat_messages FOR INSERT 
+WITH CHECK (
+    auth.uid() IS NOT NULL AND sender_id = auth.uid()
+);
+
+CREATE POLICY "Chat update policy" ON public.chat_messages FOR UPDATE 
+USING (
+    sender_id = auth.uid() OR public.is_admin()
+);
+
+CREATE POLICY "Chat delete policy" ON public.chat_messages FOR DELETE 
+USING (
+    sender_id = auth.uid() OR public.is_admin()
+);
+
+-- Enable Realtime for chat messages
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'chat_messages'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        NULL;
+END $$;
+
+-- 9. Ensure default admin role
 UPDATE public.profiles
 SET role = 'admin', updated_at = NOW()
 WHERE email = 'manastraderstkp@gmail.com';

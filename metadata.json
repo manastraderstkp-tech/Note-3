@@ -1,6 +1,6 @@
 {
   "name": "WorkSpace - Notes, Tasks & Work Logs",
-  "description": "An executive productivity workspace featuring My Transactions & Accounting Daybook (receipts, payments & expense tracking), Role-Based Access Control (RBAC), Supabase authentication, Cloud File Drive & Folder Management, Share Market analysis, and rich text note editing.",
+  "description": "An executive productivity workspace featuring Real-time Team & 1-on-1 Workspace Chat, My Transactions & Accounting Daybook (receipts, payments & expense tracking), Role-Based Access Control (RBAC), Supabase authentication, Cloud File Drive & Folder Management, Share Market analysis, and rich text note editing.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

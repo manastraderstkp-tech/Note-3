@@ -1,4 +1,4 @@
-export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket' | 'transactions' | 'trash' | 'account';
+export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket' | 'transactions' | 'chat' | 'trash' | 'account';
 
 export type UserRole = 'admin' | 'user';
 
@@ -223,5 +223,44 @@ export interface AccountingSummary {
   bankBalance: number;
   digitalWalletBalance: number;
   transactionCount: number;
+}
+
+export interface MessageReaction {
+  emoji: string;
+  count: number;
+  userIds: string[];
+}
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderEmail: string;
+  senderAvatar?: string;
+  senderRole?: UserRole;
+  receiverId?: string | null; // 'general' or null for public team chat, or target user ID for 1-on-1 private chat
+  content: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  attachmentType?: 'image' | 'file';
+  replyToId?: string | null;
+  replyToSnippet?: string | null;
+  replyToSender?: string | null;
+  reactions?: MessageReaction[];
+  createdAt: string;
+  updatedAt?: string;
+  isDeleted?: boolean;
+}
+
+export interface ChatUser {
+  id: string;
+  email: string;
+  fullName: string;
+  phoneNumber?: string;
+  avatarUrl?: string;
+  role: UserRole;
+  isOnline?: boolean;
+  lastSeen?: string;
+  unreadCount?: number;
 }
 

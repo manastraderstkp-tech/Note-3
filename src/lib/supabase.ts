@@ -2566,6 +2566,183 @@ export function subscribeToWorkspaceChat(
 }
 
 // -----------------------------------------------------------------------------
+// NEPSE / Share Market Transactions Helpers
+// -----------------------------------------------------------------------------
+
+export interface NepseTransaction {
+  id: string;
+  user_id?: string;
+  symbol: string;
+  transaction_type: 'BUY' | 'SELL';
+  units: number;
+  price: number;
+  transaction_date: string; // YYYY-MM-DD
+  created_at?: string;
+}
+
+/**
+ * Fetch all NEPSE share market transactions for a user from Supabase.
+ */
+export async function fetchTransactions(
+  userId: string
+): Promise<{ data: NepseTransaction[]; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { data: [], error: 'Supabase client is not initialized.' };
+  }
+
+  if (!userId) {
+    return { data: [], error: 'User ID is required to fetch transactions.' };
+  }
+
+  try {
+    const { data, error } = await client
+      .from('nepse_transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('transaction_date', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching nepse_transactions from Supabase:', error.message);
+      return { data: [], error: error.message };
+    }
+
+    const formatted: NepseTransaction[] = (data || []).map((row: any) => ({
+      id: row.id,
+      user_id: row.user_id,
+      symbol: row.symbol || '',
+      transaction_type: row.transaction_type === 'SELL' ? 'SELL' : 'BUY',
+      units: Number(row.units) || 0,
+      price: Number(row.price) || 0,
+      transaction_date: row.transaction_date || new Date().toISOString().split('T')[0],
+      created_at: row.created_at,
+    }));
+
+    return { data: formatted, error: null };
+  } catch (err: any) {
+    console.error('Exception fetching nepse_transactions:', err);
+    return { data: [], error: err?.message || 'Failed to fetch transactions from Supabase' };
+  }
+}
+
+/**
+ * Save or update a NEPSE transaction in Supabase.
+ */
+export async function saveTransaction(
+  userId: string,
+  transactionData: {
+    id?: string;
+    symbol: string;
+    transaction_type?: 'BUY' | 'SELL';
+    action?: 'BUY' | 'SELL';
+    units: number;
+    price: number;
+    transaction_date?: string;
+    tradeDate?: string;
+  }
+): Promise<{ success: boolean; data?: NepseTransaction; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { success: false, error: 'Supabase client is not initialized.' };
+  }
+
+  if (!userId) {
+    return { success: false, error: 'User ID is required to save transaction.' };
+  }
+
+  if (!transactionData.symbol || !transactionData.symbol.trim()) {
+    return { success: false, error: 'Stock symbol is required.' };
+  }
+
+  try {
+    const txType = (transactionData.transaction_type || transactionData.action || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+    const txDate = transactionData.transaction_date || transactionData.tradeDate || new Date().toISOString().split('T')[0];
+
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    let finalId = transactionData.id;
+
+    if (!finalId || !uuidPattern.test(finalId)) {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        finalId = crypto.randomUUID();
+      }
+    }
+
+    const payload: any = {
+      user_id: userId,
+      symbol: transactionData.symbol.toUpperCase().trim(),
+      transaction_type: txType,
+      units: Number(transactionData.units) || 0,
+      price: Number(transactionData.price) || 0,
+      transaction_date: txDate,
+    };
+
+    if (finalId && uuidPattern.test(finalId)) {
+      payload.id = finalId;
+    }
+
+    const { data, error } = await client
+      .from('nepse_transactions')
+      .upsert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error saving nepse_transaction to Supabase:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    const savedRecord: NepseTransaction = {
+      id: data.id,
+      user_id: data.user_id,
+      symbol: data.symbol,
+      transaction_type: data.transaction_type,
+      units: Number(data.units),
+      price: Number(data.price),
+      transaction_date: data.transaction_date,
+      created_at: data.created_at,
+    };
+
+    return { success: true, data: savedRecord, error: null };
+  } catch (err: any) {
+    console.error('Exception saving nepse_transaction:', err);
+    return { success: false, error: err?.message || 'Failed to save transaction to Supabase' };
+  }
+}
+
+/**
+ * Delete a NEPSE transaction by ID from Supabase.
+ */
+export async function deleteTransaction(
+  transactionId: string
+): Promise<{ success: boolean; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { success: false, error: 'Supabase client is not initialized.' };
+  }
+
+  if (!transactionId) {
+    return { success: false, error: 'Transaction ID is required for deletion.' };
+  }
+
+  try {
+    const { error } = await client
+      .from('nepse_transactions')
+      .delete()
+      .eq('id', transactionId);
+
+    if (error) {
+      console.error('Error deleting nepse_transaction from Supabase:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('Exception deleting nepse_transaction:', err);
+    return { success: false, error: err?.message || 'Failed to delete transaction' };
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Unified SQL Schema & RLS Policies
 // -----------------------------------------------------------------------------
 
@@ -3007,9 +3184,16 @@ CREATE POLICY "Transactions update policy" ON public.transactions FOR UPDATE
 CREATE POLICY "Transactions delete policy" ON public.transactions FOR DELETE 
     USING (auth.uid() = user_id OR public.is_admin());
 
--- Enable Realtime for transactions & chat messages
+-- Enable Realtime for nepse_transactions, transactions & chat messages
 DO $$
 BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'nepse_transactions'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.nepse_transactions;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM pg_publication_tables 
         WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'transactions'
@@ -3028,7 +3212,40 @@ EXCEPTION
         NULL;
 END $$;
 
--- 10. Ensure default admin role
+-- 10. NEPSE TRANSACTIONS TABLE (Share Market Trade Log)
+CREATE TABLE IF NOT EXISTS public.nepse_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    symbol TEXT NOT NULL,
+    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('BUY', 'SELL')),
+    units NUMERIC NOT NULL DEFAULT 0,
+    price NUMERIC NOT NULL DEFAULT 0,
+    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_nepse_tx_user_date ON public.nepse_transactions(user_id, transaction_date);
+
+ALTER TABLE public.nepse_transactions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Nepse transactions select policy" ON public.nepse_transactions;
+DROP POLICY IF EXISTS "Nepse transactions insert policy" ON public.nepse_transactions;
+DROP POLICY IF EXISTS "Nepse transactions update policy" ON public.nepse_transactions;
+DROP POLICY IF EXISTS "Nepse transactions delete policy" ON public.nepse_transactions;
+
+CREATE POLICY "Nepse transactions select policy" ON public.nepse_transactions FOR SELECT 
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Nepse transactions insert policy" ON public.nepse_transactions FOR INSERT 
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Nepse transactions update policy" ON public.nepse_transactions FOR UPDATE 
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Nepse transactions delete policy" ON public.nepse_transactions FOR DELETE 
+    USING (auth.uid() = user_id OR public.is_admin());
+
+-- 11. Ensure default admin role
 UPDATE public.profiles
 SET role = 'admin', updated_at = NOW()
 WHERE email = 'manastraderstkp@gmail.com';

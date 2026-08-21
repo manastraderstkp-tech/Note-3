@@ -1,4 +1,4 @@
-import { getSupabase } from './supabase';
+import { getSupabase, fetchTransactions, saveTransaction, deleteTransaction } from './supabase';
 import { StockHoldings, TradeLog } from '../types';
 
 // Storage keys for local fallback
@@ -148,35 +148,51 @@ export async function fetchTrades(userId: string): Promise<{ trades: TradeLog[];
   const localKey = getTradesKey(userId);
 
   if (client) {
-    try {
-      const { data, error } = await client
-        .from('share_trades')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+    // Primary: fetch from nepse_transactions table
+    const nepseRes = await fetchTransactions(userId);
+    if (!nepseRes.error && nepseRes.data) {
+      const trades: TradeLog[] = nepseRes.data.map((item) => ({
+        id: item.id,
+        symbol: item.symbol || '',
+        action: item.transaction_type === 'SELL' ? 'SELL' : 'BUY',
+        units: Number(item.units) || 0,
+        price: Number(item.price) || 0,
+        tradeDate: item.transaction_date || '',
+        strategy: 'Nepse Trade',
+        psychologyNotes: '',
+        createdAt: item.created_at || new Date().toISOString(),
+      }));
 
-      if (!error && data) {
-        const trades: TradeLog[] = data.map((item: any) => ({
-          id: item.id,
-          symbol: item.symbol || '',
-          action: item.action === 'SELL' ? 'SELL' : 'BUY',
-          units: Number(item.units) || 0,
-          price: Number(item.price) || 0,
-          tradeDate: item.trade_date || '',
-          strategy: item.strategy || '',
-          psychologyNotes: item.psychology_notes || '',
-          createdAt: item.created_at || new Date().toISOString(),
-        }));
+      localStorage.setItem(localKey, JSON.stringify(trades));
+      return { trades, isCloud: true };
+    } else {
+      // Secondary fallback: share_trades table
+      try {
+        const { data, error } = await client
+          .from('share_trades')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
 
-        localStorage.setItem(localKey, JSON.stringify(trades));
-        return { trades, isCloud: true };
-      } else {
-        if (error && error.code === '42P01') {
-          console.warn('share_trades table does not exist in Supabase yet. Using local fallback.');
+        if (!error && data) {
+          const trades: TradeLog[] = data.map((item: any) => ({
+            id: item.id,
+            symbol: item.symbol || '',
+            action: item.action === 'SELL' ? 'SELL' : 'BUY',
+            units: Number(item.units) || 0,
+            price: Number(item.price) || 0,
+            tradeDate: item.trade_date || '',
+            strategy: item.strategy || '',
+            psychologyNotes: item.psychology_notes || '',
+            createdAt: item.created_at || new Date().toISOString(),
+          }));
+
+          localStorage.setItem(localKey, JSON.stringify(trades));
+          return { trades, isCloud: true };
         }
+      } catch (err) {
+        console.warn('Error fetching share_trades from Supabase:', err);
       }
-    } catch (err) {
-      console.warn('Error fetching trades from Supabase:', err);
     }
   }
 
@@ -218,28 +234,50 @@ export async function saveTradeLog(
   localStorage.setItem(localKey, JSON.stringify(currentTrades));
 
   if (client) {
-    try {
-      const dbPayload = {
-        id: newItem.id,
-        user_id: userId,
-        symbol: newItem.symbol.toUpperCase(),
-        action: newItem.action,
-        units: newItem.units,
-        price: newItem.price,
-        trade_date: newItem.tradeDate,
-        strategy: newItem.strategy,
-        psychology_notes: newItem.psychologyNotes,
-      };
+    // 1. Save to nepse_transactions table
+    const saveRes = await saveTransaction(userId, {
+      id: newItem.id,
+      symbol: newItem.symbol,
+      transaction_type: newItem.action,
+      units: newItem.units,
+      price: newItem.price,
+      transaction_date: newItem.tradeDate,
+    });
 
-      const { error } = await client.from('share_trades').upsert(dbPayload);
-      if (error) {
-        console.warn('Could not save trade to Supabase, cached locally:', error);
-        return { success: true, error: 'Saved locally. (Supabase sync failed: table might not exist)' };
+    if (saveRes.success && saveRes.data) {
+      newItem.id = saveRes.data.id; // ensure saved UUID is updated
+      if (existingIndex >= 0) {
+        currentTrades[existingIndex] = newItem;
+      } else {
+        currentTrades[0] = newItem;
       }
+      localStorage.setItem(localKey, JSON.stringify(currentTrades));
       return { success: true };
-    } catch (err) {
-      console.warn('Supabase exception saving trade, cached locally:', err);
-      return { success: true, error: 'Saved locally' };
+    } else {
+      // Try secondary table fallback: share_trades
+      try {
+        const dbPayload = {
+          id: newItem.id,
+          user_id: userId,
+          symbol: newItem.symbol.toUpperCase(),
+          action: newItem.action,
+          units: newItem.units,
+          price: newItem.price,
+          trade_date: newItem.tradeDate,
+          strategy: newItem.strategy,
+          psychology_notes: newItem.psychologyNotes,
+        };
+
+        const { error } = await client.from('share_trades').upsert(dbPayload);
+        if (!error) return { success: true };
+      } catch (err) {
+        console.warn('Fallback share_trades save error:', err);
+      }
+
+      return {
+        success: true,
+        error: saveRes.error ? `Saved locally. Supabase error: ${saveRes.error}` : 'Saved locally',
+      };
     }
   }
 
@@ -263,13 +301,21 @@ export async function deleteTradeLog(
   localStorage.setItem(localKey, JSON.stringify(filtered));
 
   if (client) {
-    try {
-      const { error } = await client.from('share_trades').delete().eq('id', itemId).eq('user_id', userId);
-      if (error) {
-        console.warn('Could not delete trade from Supabase, updated locally:', error);
+    const delRes = await deleteTransaction(itemId);
+    if (!delRes.error) {
+      // Also cleanup secondary table if present
+      try {
+        await client.from('share_trades').delete().eq('id', itemId).eq('user_id', userId);
+      } catch {}
+      return { success: true };
+    } else {
+      try {
+        await client.from('share_trades').delete().eq('id', itemId).eq('user_id', userId);
+        return { success: true };
+      } catch (err) {
+        console.warn('Delete trade log error:', err);
       }
-    } catch (err) {
-      console.warn('Supabase exception deleting trade:', err);
+      return { success: true, error: delRes.error };
     }
   }
 

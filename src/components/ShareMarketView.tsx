@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -23,6 +23,7 @@ import {
   Heart
 } from 'lucide-react';
 import { StockHoldings, TradeLog } from '../types';
+import { getSupabase } from '../lib/supabase';
 import {
   fetchPortfolio,
   savePortfolioItem,
@@ -225,8 +226,8 @@ export const ShareMarketView: React.FC<ShareMarketViewProps> = ({ userId, onShow
   }, []);
 
   // Fetch initial data
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = useCallback(async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
     try {
       const pfRes = await fetchPortfolio(userId);
       const trRes = await fetchTrades(userId);
@@ -236,7 +237,7 @@ export const ShareMarketView: React.FC<ShareMarketViewProps> = ({ userId, onShow
       setTrades(trRes.trades);
       setWatchlistSymbols(wlRes.watchlist);
 
-      if (pfRes.isCloud && trRes.isCloud && wlRes.isCloud) {
+      if (pfRes.isCloud || trRes.isCloud) {
         setSyncStatus('Supabase Cloud Synchronized');
       } else {
         setSyncStatus('Using local responsive cache');
@@ -245,15 +246,60 @@ export const ShareMarketView: React.FC<ShareMarketViewProps> = ({ userId, onShow
       console.error(err);
       onShowToast('Could not fetch share market data', 'error');
     } finally {
-      setLoading(false);
+      if (!isSilent) setLoading(false);
     }
-  };
+  }, [userId, onShowToast]);
 
   useEffect(() => {
     if (userId) {
       loadData();
     }
-  }, [userId]);
+
+    const client = getSupabase();
+    if (!client) return;
+
+    // 1. Auth state change listener (onAuthStateChange)
+    const { data: authListener } = client.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.id) {
+        loadData(true);
+      }
+    });
+
+    // 2. Realtime Postgres Changes Listener for nepse_transactions
+    const channelName = `nepse_tx_live_${userId.slice(0, 8)}_${Math.random().toString(36).substring(2, 6)}`;
+    const channel = client
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'nepse_transactions' },
+        () => {
+          loadData(true);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'share_trades' },
+        () => {
+          loadData(true);
+        }
+      )
+      .subscribe();
+
+    // 3. Focus & Visibility Change Listener
+    const handleFocus = () => {
+      loadData(true);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      authListener?.subscription?.unsubscribe();
+      client.removeChannel(channel);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
+  }, [userId, loadData]);
 
   // --- Calculations for Portfolio Summary ---
   const getPortfolioSummary = () => {

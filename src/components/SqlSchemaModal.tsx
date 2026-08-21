@@ -22,7 +22,7 @@ interface SqlSchemaModalProps {
 
 export const SqlSchemaModal: React.FC<SqlSchemaModalProps> = ({ isOpen, onClose }) => {
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<'all' | 'profiles' | 'rbac' | 'notes' | 'todos' | 'worklogs' | 'transactions'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'profiles' | 'rbac' | 'notes' | 'todos' | 'worklogs' | 'transactions' | 'nepse_transactions'>('all');
 
   if (!isOpen) return null;
 
@@ -260,6 +260,39 @@ CREATE POLICY "Transactions select policy" ON public.transactions FOR SELECT USI
 CREATE POLICY "Transactions insert policy" ON public.transactions FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Transactions update policy" ON public.transactions FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Transactions delete policy" ON public.transactions FOR DELETE USING (auth.uid() = user_id OR public.is_admin());`,
+
+    nepse_transactions: `-- NEPSE TRANSACTIONS TABLE (Share Market / Trade Log)
+CREATE TABLE IF NOT EXISTS public.nepse_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    symbol TEXT NOT NULL,
+    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('BUY', 'SELL')),
+    units NUMERIC NOT NULL DEFAULT 0,
+    price NUMERIC NOT NULL DEFAULT 0,
+    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_nepse_tx_user_date ON public.nepse_transactions(user_id, transaction_date);
+
+ALTER TABLE public.nepse_transactions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Nepse transactions select policy" ON public.nepse_transactions;
+DROP POLICY IF EXISTS "Nepse transactions insert policy" ON public.nepse_transactions;
+DROP POLICY IF EXISTS "Nepse transactions update policy" ON public.nepse_transactions;
+DROP POLICY IF EXISTS "Nepse transactions delete policy" ON public.nepse_transactions;
+
+CREATE POLICY "Nepse transactions select policy" ON public.nepse_transactions FOR SELECT 
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Nepse transactions insert policy" ON public.nepse_transactions FOR INSERT 
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Nepse transactions update policy" ON public.nepse_transactions FOR UPDATE 
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Nepse transactions delete policy" ON public.nepse_transactions FOR DELETE 
+    USING (auth.uid() = user_id OR public.is_admin());`,
   };
 
   const getActiveCode = () => {
@@ -381,6 +414,16 @@ CREATE POLICY "Transactions delete policy" ON public.transactions FOR DELETE USI
               }`}
             >
               transactions table
+            </button>
+            <button
+              onClick={() => setActiveTab('nepse_transactions')}
+              className={`rounded-lg px-3 py-1.5 transition ${
+                activeTab === 'nepse_transactions'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+              }`}
+            >
+              nepse_transactions table
             </button>
           </div>
 

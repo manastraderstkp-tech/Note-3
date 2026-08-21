@@ -465,30 +465,63 @@ export function subscribeToUserTransactions(
 
   try {
     const effectiveUserId = userId || 'demo-user';
-    const channelName = `tx_live_${effectiveUserId.slice(0, 8)}_${Math.random().toString(36).substring(2, 6)}`;
+    const channelName = `user_transactions_changes_${effectiveUserId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
     const channel = supabase
       .channel(channelName)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'user_transactions' },
-        () => {
-          onDataChange();
-        }
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'user_transactions',
+          filter: `user_id=eq.${effectiveUserId}`,
+        },
+        () => onDataChange()
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'transactions' },
-        () => {
-          onDataChange();
-        }
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'user_transactions',
+          filter: `user_id=eq.${effectiveUserId}`,
+        },
+        () => onDataChange()
       )
-      .subscribe();
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'user_transactions',
+          filter: `user_id=eq.${effectiveUserId}`,
+        },
+        () => onDataChange()
+      )
+      // Fallback unfiltered listener for user_transactions in case user_id isn't matched
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_transactions' },
+        () => onDataChange()
+      )
+      // Legacy transactions table fallback
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions' },
+        () => onDataChange()
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log(`[Supabase Realtime] Subscribed to channel ${channelName}`);
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
   } catch (err) {
-    console.warn('Error setting up transactions realtime channel:', err);
+    console.warn('Error setting up user_transactions realtime channel:', err);
     return () => {};
   }
 }

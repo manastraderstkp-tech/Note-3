@@ -3352,6 +3352,8 @@ CREATE POLICY "user_transactions_insert" ON public.user_transactions FOR INSERT 
 CREATE POLICY "user_transactions_update" ON public.user_transactions FOR UPDATE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
 CREATE POLICY "user_transactions_delete" ON public.user_transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
 
+ALTER PUBLICATION supabase_realtime ADD TABLE public.user_transactions;
+
 -- 9B. TRANSACTIONS TABLE (Accounting Daybook, Expense & Income Tracker)
 CREATE TABLE IF NOT EXISTS public.transactions (
     id TEXT PRIMARY KEY,

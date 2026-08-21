@@ -249,7 +249,16 @@ DROP POLICY IF EXISTS "user_transactions_delete" ON public.user_transactions;
 CREATE POLICY "user_transactions_select" ON public.user_transactions FOR SELECT USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
 CREATE POLICY "user_transactions_insert" ON public.user_transactions FOR INSERT WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
 CREATE POLICY "user_transactions_update" ON public.user_transactions FOR UPDATE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "user_transactions_delete" ON public.user_transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());`,
+CREATE POLICY "user_transactions_delete" ON public.user_transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+
+-- Enable Supabase Realtime Publication for user_transactions
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.user_transactions;
+  END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;`,
 
     transactions: `-- TRANSACTIONS TABLE (Daybook, Expenses, Income)
 CREATE TABLE IF NOT EXISTS public.transactions (

@@ -101,8 +101,14 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleFocus);
 
+    // 3. Periodic silent polling every 5 seconds to guarantee cross-browser sync
+    const pollInterval = setInterval(() => {
+      loadData(false, true);
+    }, 5000);
+
     return () => {
       unsubscribe();
+      clearInterval(pollInterval);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleFocus);
     };

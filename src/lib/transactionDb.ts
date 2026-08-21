@@ -4,16 +4,16 @@ import { getSupabase, getStoredSupabaseConfig, isValidUUID } from './supabase';
 const STORAGE_KEY_PREFIX = 'ws_transactions_user_';
 
 async function resolveSupabaseUserId(userId: string, supabase: any): Promise<{ primaryId: string; filterIds: string[] }> {
-  const effectiveUserId = userId || 'demo-user';
-  const filterIdsSet = new Set<string>([effectiveUserId]);
+  const effectiveUserId = (userId && userId.trim()) ? userId.trim() : 'demo-user';
+  const filterIdsSet = new Set<string>([effectiveUserId, 'demo-user']);
 
   if (supabase) {
     try {
       const { data } = await supabase.auth.getUser();
       if (data?.user?.id) {
         filterIdsSet.add(data.user.id);
-        if (!isValidUUID(effectiveUserId)) {
-          return { primaryId: data.user.id, filterIds: Array.from(filterIdsSet) };
+        if (isValidUUID(effectiveUserId)) {
+          return { primaryId: effectiveUserId, filterIds: Array.from(filterIdsSet) };
         }
       }
     } catch {
@@ -22,6 +22,57 @@ async function resolveSupabaseUserId(userId: string, supabase: any): Promise<{ p
   }
 
   return { primaryId: effectiveUserId, filterIds: Array.from(filterIdsSet) };
+}
+
+async function uploadReceiptToSupabaseStorage(
+  receiptUrl: string | undefined,
+  userId: string,
+  supabase: any
+): Promise<string | null> {
+  if (!receiptUrl) return null;
+  if (!receiptUrl.startsWith('data:image/')) return receiptUrl;
+
+  try {
+    const parts = receiptUrl.split(',');
+    if (parts.length < 2) return receiptUrl;
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const bstr = atob(parts[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    const blob = new Blob([u8arr], { type: mime });
+    const ext = mime.split('/')[1] || 'jpg';
+    const filePath = `receipts/${userId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}.${ext}`;
+
+    const { error: uploadErr } = await supabase.storage
+      .from('user_files')
+      .upload(filePath, blob, { upsert: true });
+
+    if (!uploadErr) {
+      const { data: urlData } = supabase.storage
+        .from('user_files')
+        .getPublicUrl(filePath);
+      if (urlData?.publicUrl) return urlData.publicUrl;
+    }
+
+    const { error: fallbackErr } = await supabase.storage
+      .from('avatars')
+      .upload(filePath, blob, { upsert: true });
+
+    if (!fallbackErr) {
+      const { data: urlData } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+      if (urlData?.publicUrl) return urlData.publicUrl;
+    }
+  } catch (err) {
+    console.warn('Error uploading receipt image to storage:', err);
+  }
+
+  return receiptUrl;
 }
 
 export const EXPENSE_CATEGORIES = [
@@ -64,7 +115,7 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
 ];
 
 export async function fetchUserTransactions(userId: string): Promise<Transaction[]> {
-  const effectiveUserId = userId || 'demo-user';
+  const effectiveUserId = (userId && userId.trim()) ? userId.trim() : 'demo-user';
   const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
 
   // Priority 1: Fetch from Supabase if configured so other browsers get updated records
@@ -75,23 +126,21 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
       try {
         const { filterIds } = await resolveSupabaseUserId(userId, supabase);
 
-        let query = supabase
-          .from('transactions')
-          .select('*')
-          .or('is_deleted.is.null,is_deleted.eq.false')
-          .order('date', { ascending: false });
+        let query = supabase.from('transactions').select('*');
 
         if (filterIds.length === 1) {
           query = query.eq('user_id', filterIds[0]);
-        } else {
+        } else if (filterIds.length > 1) {
           query = query.in('user_id', filterIds);
         }
+
+        query = query.order('date', { ascending: false });
 
         const { data, error } = await query;
 
         if (!error && data) {
           const mapped: Transaction[] = data
-            .filter((d: any) => !d.id.startsWith('tx-init-'))
+            .filter((d: any) => !d.is_deleted && !d.id.startsWith('tx-init-'))
             .map((d: any) => ({
               id: d.id,
               userId: d.user_id,
@@ -149,7 +198,7 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
 }
 
 export async function clearAllUserTransactions(userId: string): Promise<{ success: boolean }> {
-  const effectiveUserId = userId || 'demo-user';
+  const effectiveUserId = (userId && userId.trim()) ? userId.trim() : 'demo-user';
   const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
 
   localStorage.setItem(key, JSON.stringify([]));
@@ -178,7 +227,7 @@ export async function saveUserTransaction(
   tx: Omit<Transaction, 'id' | 'createdAt' | 'userId'>,
   id?: string
 ): Promise<{ success: boolean; transaction?: Transaction; error?: string }> {
-  const effectiveUserId = userId || 'demo-user';
+  const effectiveUserId = (userId && userId.trim()) ? userId.trim() : 'demo-user';
   const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
 
   const currentList = await fetchUserTransactions(effectiveUserId);
@@ -238,6 +287,17 @@ export async function saveUserTransaction(
       try {
         const { primaryId } = await resolveSupabaseUserId(userId, supabase);
 
+        // Safely upload image if base64 to avoid POST payload overflow
+        const finalReceiptUrl = await uploadReceiptToSupabaseStorage(
+          targetTx.receiptUrl,
+          primaryId,
+          supabase
+        );
+
+        if (finalReceiptUrl) {
+          targetTx.receiptUrl = finalReceiptUrl;
+        }
+
         const { error } = await supabase.from('transactions').upsert(
           {
             id: targetTx.id,
@@ -282,7 +342,7 @@ export async function deleteUserTransaction(
   userId: string,
   txId: string
 ): Promise<{ success: boolean; deletedItem?: Transaction; error?: string }> {
-  const effectiveUserId = userId || 'demo-user';
+  const effectiveUserId = (userId && userId.trim()) ? userId.trim() : 'demo-user';
   const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
 
   const currentList = await fetchUserTransactions(effectiveUserId);
@@ -298,13 +358,10 @@ export async function deleteUserTransaction(
     const supabase = getSupabase();
     if (supabase) {
       try {
-        const { filterIds } = await resolveSupabaseUserId(userId, supabase);
-
         const { error } = await supabase
           .from('transactions')
           .update({ is_deleted: true, deleted_at: new Date().toISOString() })
-          .eq('id', txId)
-          .in('user_id', filterIds);
+          .eq('id', txId);
 
         if (error) {
           console.error('Supabase delete transaction error:', error);

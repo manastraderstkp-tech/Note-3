@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -17,7 +17,8 @@ import {
   ChevronDown,
   Clock,
   Layers,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import { Transaction, TransactionType, PaymentMethod, AccountingSummary } from '../types';
 import {
@@ -25,6 +26,7 @@ import {
   saveUserTransaction,
   deleteUserTransaction,
   clearAllUserTransactions,
+  subscribeToUserTransactions,
   calculateAccountingSummary,
   formatCurrencyNPR,
   EXPENSE_CATEGORIES,
@@ -51,6 +53,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 }) => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('all');
   
   // Filters
@@ -66,22 +69,44 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
 
   // Load Transactions
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = useCallback(async (isManualRefresh = false) => {
+    if (isManualRefresh) setRefreshing(true);
+    else setLoading(true);
+
     try {
       const data = await fetchUserTransactions(userId);
       setTransactions(data);
     } catch (e) {
       console.error('Error loading transactions:', e);
-      onShowToast('Failed to load transaction records.', 'error');
+      onShowToast('Failed to load transaction records from server.', 'error');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [userId, onShowToast]);
 
   useEffect(() => {
     loadData();
-  }, [userId]);
+
+    // 1. Subscribe to Supabase Realtime changes for transactions table
+    const unsubscribe = subscribeToUserTransactions(userId, () => {
+      loadData();
+    });
+
+    // 2. Add focus & visibility change listeners so switching back to tab reloads remote records
+    const handleFocus = () => {
+      loadData();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
+  }, [userId, loadData]);
 
   // Sync external search query from header
   useEffect(() => {
@@ -179,7 +204,11 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   ) => {
     const res = await saveUserTransaction(userId, txData, id);
     if (res.success) {
-      onShowToast(id ? 'Transaction updated successfully.' : 'Transaction recorded successfully.', 'success');
+      if (res.error) {
+        onShowToast(`Saved locally. Supabase sync note: ${res.error}`, 'info');
+      } else {
+        onShowToast(id ? 'Transaction updated & synced with Supabase.' : 'Transaction recorded & synced with Supabase.', 'success');
+      }
       loadData();
       return { success: true };
     }
@@ -280,6 +309,16 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           >
             <ArrowLeftRight className="h-3.5 w-3.5 text-indigo-500" />
             <span>Transfer (सार्नुहोस्)</span>
+          </button>
+
+          <button
+            onClick={() => loadData(true)}
+            disabled={refreshing || loading}
+            className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            title="Reload latest records from Supabase"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-emerald-500' : ''}`} />
+            <span className="hidden md:inline">Sync</span>
           </button>
 
           <button

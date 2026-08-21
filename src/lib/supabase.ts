@@ -2961,9 +2961,62 @@ USING (
     sender_id = auth.uid() OR public.is_admin()
 );
 
--- Enable Realtime for chat messages
+-- 9. TRANSACTIONS TABLE (Accounting Daybook, Expense & Income Tracker)
+CREATE TABLE IF NOT EXISTS public.transactions (
+    id TEXT PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    voucher_no TEXT,
+    type TEXT NOT NULL CHECK (type IN ('receipt', 'payment', 'transfer')),
+    date TEXT NOT NULL,
+    time TEXT,
+    amount NUMERIC NOT NULL DEFAULT 0,
+    category TEXT DEFAULT 'General',
+    payment_method TEXT NOT NULL,
+    transfer_to_method TEXT,
+    party_name TEXT,
+    description TEXT DEFAULT '',
+    receipt_url TEXT,
+    pan_vat_number TEXT,
+    has_tax_vat BOOLEAN DEFAULT FALSE,
+    tax_amount NUMERIC,
+    tags TEXT[] DEFAULT '{}',
+    is_deleted BOOLEAN DEFAULT FALSE,
+    deleted_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tx_user_date ON public.transactions(user_id, date);
+
+ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Transactions select policy" ON public.transactions;
+DROP POLICY IF EXISTS "Transactions insert policy" ON public.transactions;
+DROP POLICY IF EXISTS "Transactions update policy" ON public.transactions;
+DROP POLICY IF EXISTS "Transactions delete policy" ON public.transactions;
+
+CREATE POLICY "Transactions select policy" ON public.transactions FOR SELECT 
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Transactions insert policy" ON public.transactions FOR INSERT 
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Transactions update policy" ON public.transactions FOR UPDATE 
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Transactions delete policy" ON public.transactions FOR DELETE 
+    USING (auth.uid() = user_id OR public.is_admin());
+
+-- Enable Realtime for transactions & chat messages
 DO $$
 BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'transactions'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.transactions;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM pg_publication_tables 
         WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'chat_messages'
@@ -2975,7 +3028,7 @@ EXCEPTION
         NULL;
 END $$;
 
--- 9. Ensure default admin role
+-- 10. Ensure default admin role
 UPDATE public.profiles
 SET role = 'admin', updated_at = NOW()
 WHERE email = 'manastraderstkp@gmail.com';

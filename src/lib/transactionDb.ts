@@ -46,25 +46,7 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
   const effectiveUserId = userId || 'demo-user';
   const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
 
-  // Try fetching from localStorage first
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw !== null) {
-      const parsed: Transaction[] = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        // Filter out deleted items and any old demo placeholder transactions
-        const filtered = parsed.filter((t) => !t.isDeleted && !t.id.startsWith('tx-init-'));
-        if (filtered.length !== parsed.length) {
-          localStorage.setItem(key, JSON.stringify(filtered));
-        }
-        return filtered;
-      }
-    }
-  } catch (e) {
-    console.warn('Failed to parse local transactions:', e);
-  }
-
-  // Check Supabase if configured
+  // Priority 1: Fetch from Supabase if configured so other browsers get updated records
   const { isConfigured } = getStoredSupabaseConfig();
   if (isConfigured) {
     const supabase = getSupabase();
@@ -74,10 +56,10 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
           .from('transactions')
           .select('*')
           .eq('user_id', effectiveUserId)
-          .eq('is_deleted', false)
+          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('date', { ascending: false });
 
-        if (!error && data && data.length > 0) {
+        if (!error && data) {
           const mapped: Transaction[] = data
             .filter((d: any) => !d.id.startsWith('tx-init-'))
             .map((d: any) => ({
@@ -101,19 +83,39 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
               createdAt: d.created_at,
               updatedAt: d.updated_at,
             }));
-          localStorage.setItem(key, JSON.stringify(mapped));
+          
+          // Cache in local storage for offline fallback
+          try {
+            localStorage.setItem(key, JSON.stringify(mapped));
+          } catch (storageErr) {
+            console.warn('Local storage write warning:', storageErr);
+          }
+
           return mapped;
+        } else if (error) {
+          console.warn('Supabase select transactions error:', error.message);
         }
       } catch (err) {
-        console.warn('Supabase fetch transactions error, falling back to local:', err);
+        console.warn('Supabase fetch transactions exception, falling back to local storage:', err);
       }
     }
   }
 
-  // Clean slate: 0 transactions, 0 balance
-  const initial: Transaction[] = [];
-  localStorage.setItem(key, JSON.stringify(initial));
-  return initial;
+  // Priority 2: Fallback to localStorage if offline or Supabase fails
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw !== null) {
+      const parsed: Transaction[] = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const filtered = parsed.filter((t) => !t.isDeleted && !t.id.startsWith('tx-init-'));
+        return filtered;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to parse local transactions:', e);
+  }
+
+  return [];
 }
 
 export async function clearAllUserTransactions(userId: string): Promise<{ success: boolean }> {
@@ -197,37 +199,50 @@ export async function saveUserTransaction(
 
   // Sync to Supabase if configured
   const { isConfigured } = getStoredSupabaseConfig();
+  let syncErrorMsg: string | undefined = undefined;
+
   if (isConfigured) {
     const supabase = getSupabase();
     if (supabase) {
       try {
-        await supabase.from('transactions').upsert({
-          id: targetTx.id,
-          user_id: effectiveUserId,
-          voucher_no: targetTx.voucherNo,
-          type: targetTx.type,
-          date: targetTx.date,
-          time: targetTx.time,
-          amount: targetTx.amount,
-          category: targetTx.category,
-          payment_method: targetTx.paymentMethod,
-          transfer_to_method: targetTx.transferToMethod,
-          party_name: targetTx.partyName,
-          description: targetTx.description,
-          receipt_url: targetTx.receiptUrl,
-          pan_vat_number: targetTx.panVatNumber,
-          has_tax_vat: targetTx.hasTaxVat,
-          tax_amount: targetTx.taxAmount,
-          tags: targetTx.tags,
-          updated_at: targetTx.updatedAt,
-        });
-      } catch (err) {
-        console.warn('Supabase sync transaction failed:', err);
+        const { error } = await supabase.from('transactions').upsert(
+          {
+            id: targetTx.id,
+            user_id: effectiveUserId,
+            voucher_no: targetTx.voucherNo,
+            type: targetTx.type,
+            date: targetTx.date,
+            time: targetTx.time || null,
+            amount: targetTx.amount,
+            category: targetTx.category,
+            payment_method: targetTx.paymentMethod,
+            transfer_to_method: targetTx.transferToMethod || null,
+            party_name: targetTx.partyName || null,
+            description: targetTx.description || '',
+            receipt_url: targetTx.receiptUrl || null,
+            pan_vat_number: targetTx.panVatNumber || null,
+            has_tax_vat: targetTx.hasTaxVat || false,
+            tax_amount: targetTx.taxAmount || null,
+            tags: targetTx.tags || [],
+            is_deleted: false,
+            updated_at: targetTx.updatedAt,
+            created_at: targetTx.createdAt,
+          },
+          { onConflict: 'id' }
+        );
+
+        if (error) {
+          console.error('Supabase transaction upsert error:', error);
+          syncErrorMsg = error.message;
+        }
+      } catch (err: any) {
+        console.warn('Supabase sync transaction exception:', err);
+        syncErrorMsg = err?.message || 'Failed to sync with Supabase';
       }
     }
   }
 
-  return { success: true, transaction: targetTx };
+  return { success: true, transaction: targetTx, error: syncErrorMsg };
 }
 
 export async function deleteUserTransaction(
@@ -244,22 +259,63 @@ export async function deleteUserTransaction(
   localStorage.setItem(key, JSON.stringify(updatedList));
 
   const { isConfigured } = getStoredSupabaseConfig();
+  let errorMsg: string | undefined;
+
   if (isConfigured) {
     const supabase = getSupabase();
     if (supabase) {
       try {
-        await supabase
+        const { error } = await supabase
           .from('transactions')
           .update({ is_deleted: true, deleted_at: new Date().toISOString() })
           .eq('id', txId)
           .eq('user_id', effectiveUserId);
-      } catch (err) {
+
+        if (error) {
+          console.error('Supabase delete transaction error:', error);
+          errorMsg = error.message;
+        }
+      } catch (err: any) {
         console.warn('Supabase delete transaction failed:', err);
+        errorMsg = err?.message;
       }
     }
   }
 
-  return { success: true, deletedItem: target };
+  return { success: true, deletedItem: target, error: errorMsg };
+}
+
+export function subscribeToUserTransactions(
+  userId: string,
+  onDataChange: () => void
+): () => void {
+  const { isConfigured } = getStoredSupabaseConfig();
+  if (!isConfigured) return () => {};
+
+  const supabase = getSupabase();
+  if (!supabase) return () => {};
+
+  try {
+    const effectiveUserId = userId || 'demo-user';
+    const channelName = `tx_live_${effectiveUserId.slice(0, 8)}_${Math.random().toString(36).substring(2, 6)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions' },
+        () => {
+          onDataChange();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  } catch (err) {
+    console.warn('Error setting up transactions realtime channel:', err);
+    return () => {};
+  }
 }
 
 export function calculateAccountingSummary(transactions: Transaction[]): AccountingSummary {

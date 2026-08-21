@@ -26,6 +26,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { UserSession, MetricStats } from '../types';
+import { uploadUserAvatar } from '../lib/supabase';
 
 interface AccountViewProps {
   currentUser: UserSession | null;
@@ -122,9 +123,9 @@ export const AccountView: React.FC<AccountViewProps> = ({
       if (result) {
         // Compress / resize image using HTML5 canvas
         const img = new Image();
-        img.onload = () => {
+        img.onload = async () => {
           const canvas = document.createElement('canvas');
-          const maxDim = 200;
+          const maxDim = 320;
           let width = img.width;
           let height = img.height;
 
@@ -143,17 +144,32 @@ export const AccountView: React.FC<AccountViewProps> = ({
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
+          let optimizedDataUrl = result;
           if (ctx) {
             ctx.drawImage(img, 0, 0, width, height);
-            const optimizedBase64 = canvas.toDataURL('image/jpeg', 0.8);
-            setAvatarUrl(optimizedBase64);
-            setShowAvatarPicker(false);
-            onShowToast('Profile photo selected. Click "Save Profile" to save changes.', 'info');
-          } else {
-            setAvatarUrl(result);
-            setShowAvatarPicker(false);
+            optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
           }
+
+          // Try uploading to Supabase storage immediately
+          if (currentUser?.id) {
+            try {
+              const uploadRes = await uploadUserAvatar(currentUser.id, optimizedDataUrl);
+              if (uploadRes.publicUrl) {
+                setAvatarUrl(uploadRes.publicUrl);
+                setShowAvatarPicker(false);
+                setIsProcessingImage(false);
+                onShowToast('Photo uploaded to Supabase Storage. Click "Save Profile" to finish.', 'success');
+                return;
+              }
+            } catch (err) {
+              console.warn('Storage upload during pick fallback to dataUrl:', err);
+            }
+          }
+
+          setAvatarUrl(optimizedDataUrl);
+          setShowAvatarPicker(false);
           setIsProcessingImage(false);
+          onShowToast('Photo selected. Click "Save Profile" to save.', 'info');
         };
         img.onerror = () => {
           setAvatarUrl(result);
@@ -546,8 +562,9 @@ export const AccountView: React.FC<AccountViewProps> = ({
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-3.5 py-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">
-                Used for account identification, contact card, and workspace records.
+              <p className="mt-1 text-[11px] text-indigo-600 dark:text-indigo-400 flex items-center gap-1 font-medium">
+                <CheckCircle2 className="h-3 w-3 inline" />
+                <span>Supabase Authentication (User Phone) र Profiles database मा सेभ हुनेछ।</span>
               </p>
             </div>
 
@@ -753,7 +770,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
                       Click to Browse or Take Photo
                     </p>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      PNG, JPG, WEBP up to 5MB (auto-optimized)
+                      PNG, JPG, WEBP • Supabase Storage मा अपलोड भई Auth UID को अगाडि Avatar मा देखिनेछ
                     </p>
                   </div>
                 </button>

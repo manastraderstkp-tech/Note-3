@@ -203,10 +203,14 @@ export async function fetchUserProfile(
     try {
       // Check auth metadata for fallback
       let authMeta: Record<string, any> = {};
+      let authUserPhone: string | undefined = undefined;
       try {
         const { data: authUserData } = await client.auth.getUser();
-        if (authUserData?.user?.id === userId && authUserData.user.user_metadata) {
-          authMeta = authUserData.user.user_metadata;
+        if (authUserData?.user?.id === userId) {
+          authUserPhone = authUserData.user.phone;
+          if (authUserData.user.user_metadata) {
+            authMeta = authUserData.user.user_metadata;
+          }
         }
       } catch {
         // ignore
@@ -223,9 +227,9 @@ export async function fetchUserProfile(
         const profile: UserProfile = {
           id: data.id,
           email: data.email || trimmedEmail,
-          fullName: data.full_name || authMeta.full_name || localExisting?.fullName || fullName,
-          phoneNumber: data.phone_number || authMeta.phone_number || localExisting?.phoneNumber || (storedUser?.id === userId ? storedUser.phoneNumber : undefined),
-          avatarUrl: data.avatar_url || authMeta.avatar_url || localExisting?.avatarUrl || (storedUser?.id === userId ? storedUser.avatarUrl : undefined),
+          fullName: data.full_name || authMeta.full_name || authMeta.name || localExisting?.fullName || fullName,
+          phoneNumber: data.phone_number || authUserPhone || authMeta.phone || authMeta.phone_number || authMeta.phoneNumber || localExisting?.phoneNumber || (storedUser?.id === userId ? storedUser.phoneNumber : undefined),
+          avatarUrl: data.avatar_url || authMeta.avatar_url || authMeta.picture || authMeta.avatar || localExisting?.avatarUrl || (storedUser?.id === userId ? storedUser.avatarUrl : undefined),
           role,
           createdAt: data.created_at || new Date().toISOString(),
           updatedAt: data.updated_at,
@@ -235,13 +239,13 @@ export async function fetchUserProfile(
       }
 
       const defaultRole: UserRole = trimmedEmail === DEFAULT_ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user';
-      const resolvedPhone = authMeta.phone_number || localExisting?.phoneNumber || (storedUser?.id === userId ? storedUser.phoneNumber : undefined);
-      const resolvedAvatar = authMeta.avatar_url || localExisting?.avatarUrl || (storedUser?.id === userId ? storedUser.avatarUrl : undefined);
+      const resolvedPhone = authUserPhone || authMeta.phone || authMeta.phone_number || authMeta.phoneNumber || localExisting?.phoneNumber || (storedUser?.id === userId ? storedUser.phoneNumber : undefined);
+      const resolvedAvatar = authMeta.avatar_url || authMeta.picture || authMeta.avatar || localExisting?.avatarUrl || (storedUser?.id === userId ? storedUser.avatarUrl : undefined);
 
       const newProfile: UserProfile = {
         id: userId,
         email: trimmedEmail,
-        fullName: fullName || authMeta.full_name || trimmedEmail.split('@')[0],
+        fullName: fullName || authMeta.full_name || authMeta.name || trimmedEmail.split('@')[0],
         phoneNumber: resolvedPhone,
         avatarUrl: resolvedAvatar,
         role: defaultRole,
@@ -383,6 +387,101 @@ export async function updateUserRoleInDb(
   return { success: true };
 }
 
+export async function uploadUserAvatar(
+  userId: string,
+  imageFileOrBlobOrDataUrl: File | Blob | string
+): Promise<{ publicUrl: string | null; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { publicUrl: null, error: 'Supabase client is not configured' };
+  }
+
+  try {
+    let fileBlob: Blob | File;
+    let extension = 'jpg';
+
+    if (typeof imageFileOrBlobOrDataUrl === 'string') {
+      if (imageFileOrBlobOrDataUrl.startsWith('http://') || imageFileOrBlobOrDataUrl.startsWith('https://')) {
+        return { publicUrl: imageFileOrBlobOrDataUrl, error: null };
+      }
+      if (imageFileOrBlobOrDataUrl.startsWith('data:')) {
+        const parts = imageFileOrBlobOrDataUrl.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        extension = mimeType.split('/')[1] || 'jpg';
+        const byteString = atob(parts[1]);
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) {
+          ia[i] = byteString.charCodeAt(i);
+        }
+        fileBlob = new Blob([ab], { type: mimeType });
+      } else {
+        return { publicUrl: imageFileOrBlobOrDataUrl, error: null };
+      }
+    } else {
+      fileBlob = imageFileOrBlobOrDataUrl;
+      if (imageFileOrBlobOrDataUrl instanceof File && imageFileOrBlobOrDataUrl.name) {
+        const nameParts = imageFileOrBlobOrDataUrl.name.split('.');
+        if (nameParts.length > 1) {
+          extension = nameParts.pop() || 'jpg';
+        }
+      }
+    }
+
+    const timestamp = Date.now();
+    const fileName = `${userId}/avatar_${timestamp}.${extension}`;
+    const fallbackPath = `${userId}/avatar.${extension}`;
+
+    // Try 'avatars' storage bucket
+    let bucketName = 'avatars';
+    let { data: uploadData, error: uploadErr } = await client.storage
+      .from(bucketName)
+      .upload(fileName, fileBlob, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    // If 'avatars' bucket is missing or throws error, try 'user_files' bucket
+    if (uploadErr) {
+      console.warn('Upload to avatars bucket failed, trying user_files bucket:', uploadErr);
+      bucketName = 'user_files';
+      const resFallback = await client.storage
+        .from(bucketName)
+        .upload(`avatars/${fileName}`, fileBlob, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (resFallback.error) {
+        console.warn('Upload to user_files also failed, trying fallback path in avatars:', resFallback.error);
+        bucketName = 'avatars';
+        const resRetry = await client.storage
+          .from(bucketName)
+          .upload(fallbackPath, fileBlob, {
+            cacheControl: '3600',
+            upsert: true,
+          });
+        if (resRetry.error) {
+          return { publicUrl: null, error: resRetry.error.message };
+        }
+      }
+    }
+
+    const finalPath = bucketName === 'user_files' ? `avatars/${fileName}` : fileName;
+    const { data: urlData } = client.storage.from(bucketName).getPublicUrl(finalPath);
+    const publicUrl = urlData?.publicUrl;
+
+    if (publicUrl) {
+      return { publicUrl, error: null };
+    }
+    return { publicUrl: null, error: 'Could not generate public storage URL' };
+  } catch (err: any) {
+    console.error('Error uploading avatar to Supabase:', err);
+    return { publicUrl: null, error: err?.message || 'Failed to upload avatar image' };
+  }
+}
+
 export async function updateUserProfileData(
   userId: string,
   updates: { fullName?: string; phoneNumber?: string; avatarUrl?: string }
@@ -390,9 +489,21 @@ export async function updateUserProfileData(
   const client = getSupabase();
   const trimmedName = updates.fullName !== undefined ? updates.fullName.trim() : undefined;
   const trimmedPhone = updates.phoneNumber !== undefined ? updates.phoneNumber.trim() : undefined;
-  const avatarUrl = updates.avatarUrl !== undefined ? updates.avatarUrl : undefined;
+  let finalAvatarUrl = updates.avatarUrl !== undefined ? updates.avatarUrl : undefined;
 
   let updateError: string | undefined = undefined;
+
+  // If avatarUrl is a local base64/data URL, upload to Supabase storage first to get a permanent public URL
+  if (finalAvatarUrl && finalAvatarUrl.startsWith('data:image/') && client) {
+    try {
+      const uploadRes = await uploadUserAvatar(userId, finalAvatarUrl);
+      if (uploadRes.publicUrl) {
+        finalAvatarUrl = uploadRes.publicUrl;
+      }
+    } catch (uploadEx) {
+      console.warn('Failed to upload avatar data URL to storage:', uploadEx);
+    }
+  }
 
   if (client) {
     try {
@@ -401,8 +512,13 @@ export async function updateUserProfileData(
         updated_at: new Date().toISOString(),
       };
       if (trimmedName !== undefined) dbUpdates.full_name = trimmedName;
-      if (trimmedPhone !== undefined) dbUpdates.phone_number = trimmedPhone;
-      if (avatarUrl !== undefined) dbUpdates.avatar_url = avatarUrl;
+      if (trimmedPhone !== undefined) {
+        dbUpdates.phone_number = trimmedPhone;
+        dbUpdates.phone = trimmedPhone;
+      }
+      if (finalAvatarUrl !== undefined) {
+        dbUpdates.avatar_url = finalAvatarUrl;
+      }
 
       // Upsert into profiles table
       const { error: profileError } = await client
@@ -410,33 +526,89 @@ export async function updateUserProfileData(
         .upsert(dbUpdates, { onConflict: 'id' });
 
       if (profileError) {
-        console.warn('Profile full upsert error, trying fallback:', profileError);
-        // If error was due to missing phone_number or avatar_url columns, retry with full_name only
+        console.warn('Profile full upsert error, trying fallback without phone column:', profileError);
+        const fallbackUpdates: Record<string, any> = {
+          id: userId,
+          updated_at: new Date().toISOString(),
+        };
+        if (trimmedName !== undefined) fallbackUpdates.full_name = trimmedName;
+        if (trimmedPhone !== undefined) fallbackUpdates.phone_number = trimmedPhone;
+        if (finalAvatarUrl !== undefined) fallbackUpdates.avatar_url = finalAvatarUrl;
+
         const { error: fallbackErr } = await client
           .from('profiles')
-          .update({
-            full_name: trimmedName,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', userId);
+          .upsert(fallbackUpdates, { onConflict: 'id' });
+
         if (fallbackErr) {
           console.warn('Profile fallback update error:', fallbackErr);
+          await client.from('profiles').update({
+            full_name: trimmedName,
+            updated_at: new Date().toISOString(),
+          }).eq('id', userId);
         }
       }
 
-      // Also update auth user metadata if active session exists
+      // Sync with Supabase Auth: update user_metadata AND direct phone field in auth.users
       try {
         const authData: Record<string, any> = {};
-        if (trimmedName !== undefined) authData.full_name = trimmedName;
-        if (trimmedPhone !== undefined) authData.phone_number = trimmedPhone;
-        // Avoid putting very large base64 strings into auth metadata (auth service payload limits)
-        if (avatarUrl !== undefined && !avatarUrl.startsWith('data:image/') || (avatarUrl && avatarUrl.length < 8192)) {
-          authData.avatar_url = avatarUrl;
+        if (trimmedName !== undefined) {
+          authData.full_name = trimmedName;
+          authData.name = trimmedName;
+        }
+        if (trimmedPhone !== undefined) {
+          authData.phone = trimmedPhone;
+          authData.phone_number = trimmedPhone;
+          authData.phoneNumber = trimmedPhone;
+        }
+        if (finalAvatarUrl !== undefined) {
+          // Public HTTPS URLs in user_metadata render the user avatar next to UID in Supabase Auth dashboard!
+          authData.avatar_url = finalAvatarUrl;
+          authData.picture = finalAvatarUrl;
+          authData.avatar = finalAvatarUrl;
         }
 
-        await client.auth.updateUser({
+        // Format phone for auth.users phone column
+        let formattedAuthPhone: string | undefined = undefined;
+        if (trimmedPhone !== undefined) {
+          if (trimmedPhone === '') {
+            formattedAuthPhone = '';
+          } else {
+            const cleanDigits = trimmedPhone.replace(/[\s\-()]/g, '');
+            if (cleanDigits.startsWith('+')) {
+              formattedAuthPhone = cleanDigits;
+            } else if (cleanDigits.length === 10 && /^[987]/.test(cleanDigits)) {
+              formattedAuthPhone = `+977${cleanDigits}`;
+            } else if (/^\d{8,15}$/.test(cleanDigits)) {
+              formattedAuthPhone = `+${cleanDigits}`;
+            } else {
+              formattedAuthPhone = cleanDigits;
+            }
+          }
+        }
+
+        const authPayload: Record<string, any> = {
           data: authData,
-        });
+        };
+        if (formattedAuthPhone !== undefined && formattedAuthPhone !== '') {
+          authPayload.phone = formattedAuthPhone;
+        }
+
+        const { error: authErr } = await client.auth.updateUser(authPayload);
+        if (authErr) {
+          console.warn('Auth updateUser with phone error:', authErr);
+          // Retry with raw phone or just metadata if project requires SMS config
+          if (trimmedPhone && trimmedPhone !== formattedAuthPhone) {
+            const { error: rawErr } = await client.auth.updateUser({
+              phone: trimmedPhone,
+              data: authData,
+            });
+            if (rawErr) {
+              await client.auth.updateUser({ data: authData });
+            }
+          } else {
+            await client.auth.updateUser({ data: authData });
+          }
+        }
       } catch (authErr) {
         console.warn('Auth updateUser error:', authErr);
       }
@@ -452,7 +624,7 @@ export async function updateUserProfileData(
   if (index !== -1) {
     if (trimmedName !== undefined) localProfiles[index].fullName = trimmedName;
     if (trimmedPhone !== undefined) localProfiles[index].phoneNumber = trimmedPhone;
-    if (avatarUrl !== undefined) localProfiles[index].avatarUrl = avatarUrl;
+    if (finalAvatarUrl !== undefined) localProfiles[index].avatarUrl = finalAvatarUrl;
     localProfiles[index].updatedAt = new Date().toISOString();
     try {
       localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(localProfiles));
@@ -466,7 +638,7 @@ export async function updateUserProfileData(
   if (currentUser && currentUser.id === userId) {
     if (trimmedName !== undefined) currentUser.fullName = trimmedName;
     if (trimmedPhone !== undefined) currentUser.phoneNumber = trimmedPhone;
-    if (avatarUrl !== undefined) currentUser.avatarUrl = avatarUrl;
+    if (finalAvatarUrl !== undefined) currentUser.avatarUrl = finalAvatarUrl;
     storeLocalUser(currentUser);
     return { success: true, user: currentUser };
   }
@@ -789,9 +961,9 @@ export async function signInUser(
     const sessionUser: UserSession = {
       id: data.user.id,
       email: data.user.email || trimmedEmail,
-      fullName: profile?.fullName || data.user.user_metadata?.full_name || trimmedEmail.split('@')[0],
-      phoneNumber: profile?.phoneNumber || data.user.user_metadata?.phone_number,
-      avatarUrl: profile?.avatarUrl || data.user.user_metadata?.avatar_url,
+      fullName: profile?.fullName || data.user.user_metadata?.full_name || data.user.user_metadata?.name || trimmedEmail.split('@')[0],
+      phoneNumber: profile?.phoneNumber || data.user.phone || data.user.user_metadata?.phone || data.user.user_metadata?.phone_number || data.user.user_metadata?.phoneNumber,
+      avatarUrl: profile?.avatarUrl || data.user.user_metadata?.avatar_url || data.user.user_metadata?.picture || data.user.user_metadata?.avatar,
       role,
       isDemo: false,
       createdAt: data.user.created_at,
@@ -871,8 +1043,8 @@ export async function getInitialSupabaseSession(): Promise<UserSession | null> {
           id: targetUser.id,
           email: userEmail,
           fullName: profile?.fullName || fullName,
-          phoneNumber: profile?.phoneNumber || targetUser.user_metadata?.phone_number,
-          avatarUrl: profile?.avatarUrl || targetUser.user_metadata?.avatar_url,
+          phoneNumber: profile?.phoneNumber || targetUser.phone || targetUser.user_metadata?.phone || targetUser.user_metadata?.phone_number || targetUser.user_metadata?.phoneNumber,
+          avatarUrl: profile?.avatarUrl || targetUser.user_metadata?.avatar_url || targetUser.user_metadata?.picture || targetUser.user_metadata?.avatar,
           role,
           isDemo: false,
           createdAt: targetUser.created_at,
@@ -1877,9 +2049,9 @@ BEGIN
     VALUES (
         NEW.id,
         NEW.email,
-        COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
-        NEW.raw_user_meta_data->>'phone_number',
-        NEW.raw_user_meta_data->>'avatar_url',
+        COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
+        COALESCE(NEW.phone, NEW.raw_user_meta_data->>'phone', NEW.raw_user_meta_data->>'phone_number', NEW.raw_user_meta_data->>'phoneNumber'),
+        COALESCE(NEW.raw_user_meta_data->>'avatar_url', NEW.raw_user_meta_data->>'picture', NEW.raw_user_meta_data->>'avatar'),
         CASE 
             WHEN LOWER(NEW.email) = 'manastraderstkp@gmail.com' THEN 'admin'
             ELSE 'user'
@@ -2153,7 +2325,27 @@ CREATE POLICY "Watchlist insert policy" ON public.share_watchlist FOR INSERT WIT
 CREATE POLICY "Watchlist update policy" ON public.share_watchlist FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Watchlist delete policy" ON public.share_watchlist FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
 
--- 7. Ensure default admin role
+-- 7. STORAGE BUCKETS (Avatars & User Files)
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('user_files', 'user_files', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Storage Policies for Avatars
+DROP POLICY IF EXISTS "Avatar Public Access" ON storage.objects;
+DROP POLICY IF EXISTS "Avatar User Insert" ON storage.objects;
+DROP POLICY IF EXISTS "Avatar User Update" ON storage.objects;
+DROP POLICY IF EXISTS "Avatar User Delete" ON storage.objects;
+
+CREATE POLICY "Avatar Public Access" ON storage.objects FOR SELECT USING (bucket_id = 'avatars' OR bucket_id = 'user_files');
+CREATE POLICY "Avatar User Insert" ON storage.objects FOR INSERT WITH CHECK ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
+CREATE POLICY "Avatar User Update" ON storage.objects FOR UPDATE USING ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
+CREATE POLICY "Avatar User Delete" ON storage.objects FOR DELETE USING ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
+
+-- 8. Ensure default admin role
 UPDATE public.profiles
 SET role = 'admin', updated_at = NOW()
 WHERE email = 'manastraderstkp@gmail.com';

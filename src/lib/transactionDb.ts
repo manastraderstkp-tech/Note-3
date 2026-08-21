@@ -42,88 +42,6 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
   'Other',
 ];
 
-const INITIAL_DEMO_TRANSACTIONS: Transaction[] = [
-  {
-    id: 'tx-init-1',
-    userId: 'demo-user',
-    voucherNo: 'RCP-001',
-    type: 'receipt',
-    date: new Date().toISOString().split('T')[0],
-    time: '09:30',
-    amount: 25000,
-    category: 'Sales Revenue (बिक्री आम्दानी)',
-    paymentMethod: 'Bank Transfer',
-    partyName: 'Apex Traders Nepal',
-    description: 'Advance payment for project delivery and consulting services',
-    hasTaxVat: true,
-    taxAmount: 3250,
-    panVatNumber: '601249821',
-    tags: ['Project A', 'Advance'],
-    createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
-  },
-  {
-    id: 'tx-init-2',
-    userId: 'demo-user',
-    voucherNo: 'PYM-001',
-    type: 'payment',
-    date: new Date().toISOString().split('T')[0],
-    time: '11:15',
-    amount: 1250,
-    category: 'Food, Tea & Snacks (चिया/खाजा)',
-    paymentMethod: 'Cash',
-    partyName: 'Bagar Himalayan Tea House',
-    description: 'Monthly office tea and staff afternoon refreshments',
-    tags: ['Daily', 'Office'],
-    createdAt: new Date(Date.now() - 3600000 * 3).toISOString(),
-  },
-  {
-    id: 'tx-init-3',
-    userId: 'demo-user',
-    voucherNo: 'PYM-002',
-    type: 'payment',
-    date: new Date().toISOString().split('T')[0],
-    time: '13:45',
-    amount: 3500,
-    category: 'Electricity, Water & Internet (विद्युत/इन्टरनेट)',
-    paymentMethod: 'eSewa',
-    partyName: 'WorldLink Communications',
-    description: 'Fiber internet renewal 3 months bill payment',
-    tags: ['Utilities'],
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-  },
-  {
-    id: 'tx-init-4',
-    userId: 'demo-user',
-    voucherNo: 'TRF-001',
-    type: 'transfer',
-    date: new Date().toISOString().split('T')[0],
-    time: '15:00',
-    amount: 5000,
-    category: 'Contra / Transfer',
-    paymentMethod: 'Bank Transfer',
-    transferToMethod: 'Cash',
-    partyName: 'Nabil Bank ATM',
-    description: 'Withdrew cash from bank for petty cash expenses',
-    tags: ['Petty Cash'],
-    createdAt: new Date(Date.now() - 3600000 * 1).toISOString(),
-  },
-  {
-    id: 'tx-init-5',
-    userId: 'demo-user',
-    voucherNo: 'PYM-003',
-    type: 'payment',
-    date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
-    time: '10:00',
-    amount: 1800,
-    category: 'Travel & Fuel (यातायात/इन्धन)',
-    paymentMethod: 'Khalti',
-    partyName: 'Sajha Petrol Pump',
-    description: 'Vehicle petrol refill for field visit',
-    tags: ['Fuel', 'Travel'],
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-  },
-];
-
 export async function fetchUserTransactions(userId: string): Promise<Transaction[]> {
   const effectiveUserId = userId || 'demo-user';
   const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
@@ -131,10 +49,15 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
   // Try fetching from localStorage first
   try {
     const raw = localStorage.getItem(key);
-    if (raw) {
+    if (raw !== null) {
       const parsed: Transaction[] = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.filter((t) => !t.isDeleted);
+      if (Array.isArray(parsed)) {
+        // Filter out deleted items and any old demo placeholder transactions
+        const filtered = parsed.filter((t) => !t.isDeleted && !t.id.startsWith('tx-init-'));
+        if (filtered.length !== parsed.length) {
+          localStorage.setItem(key, JSON.stringify(filtered));
+        }
+        return filtered;
       }
     }
   } catch (e) {
@@ -155,27 +78,29 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
           .order('date', { ascending: false });
 
         if (!error && data && data.length > 0) {
-          const mapped: Transaction[] = data.map((d: any) => ({
-            id: d.id,
-            userId: d.user_id,
-            voucherNo: d.voucher_no || `VCH-${d.id.slice(0, 4)}`,
-            type: d.type,
-            date: d.date,
-            time: d.time,
-            amount: Number(d.amount),
-            category: d.category,
-            paymentMethod: d.payment_method,
-            transferToMethod: d.transfer_to_method,
-            partyName: d.party_name,
-            description: d.description || '',
-            receiptUrl: d.receipt_url,
-            panVatNumber: d.pan_vat_number,
-            hasTaxVat: d.has_tax_vat,
-            taxAmount: d.tax_amount ? Number(d.tax_amount) : undefined,
-            tags: d.tags || [],
-            createdAt: d.created_at,
-            updatedAt: d.updated_at,
-          }));
+          const mapped: Transaction[] = data
+            .filter((d: any) => !d.id.startsWith('tx-init-'))
+            .map((d: any) => ({
+              id: d.id,
+              userId: d.user_id,
+              voucherNo: d.voucher_no || `VCH-${d.id.slice(0, 4)}`,
+              type: d.type,
+              date: d.date,
+              time: d.time,
+              amount: Number(d.amount),
+              category: d.category,
+              paymentMethod: d.payment_method,
+              transferToMethod: d.transfer_to_method,
+              partyName: d.party_name,
+              description: d.description || '',
+              receiptUrl: d.receipt_url,
+              panVatNumber: d.pan_vat_number,
+              hasTaxVat: d.has_tax_vat,
+              taxAmount: d.tax_amount ? Number(d.tax_amount) : undefined,
+              tags: d.tags || [],
+              createdAt: d.created_at,
+              updatedAt: d.updated_at,
+            }));
           localStorage.setItem(key, JSON.stringify(mapped));
           return mapped;
         }
@@ -185,10 +110,34 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
     }
   }
 
-  // If no transactions yet, initialize with demo records for a smooth first experience
-  const initial = INITIAL_DEMO_TRANSACTIONS.map((t) => ({ ...t, userId: effectiveUserId }));
+  // Clean slate: 0 transactions, 0 balance
+  const initial: Transaction[] = [];
   localStorage.setItem(key, JSON.stringify(initial));
   return initial;
+}
+
+export async function clearAllUserTransactions(userId: string): Promise<{ success: boolean }> {
+  const effectiveUserId = userId || 'demo-user';
+  const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
+
+  localStorage.setItem(key, JSON.stringify([]));
+
+  const { isConfigured } = getStoredSupabaseConfig();
+  if (isConfigured) {
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        await supabase
+          .from('transactions')
+          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+          .eq('user_id', effectiveUserId);
+      } catch (err) {
+        console.warn('Supabase clear transactions error:', err);
+      }
+    }
+  }
+
+  return { success: true };
 }
 
 export async function saveUserTransaction(

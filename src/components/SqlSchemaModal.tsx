@@ -224,6 +224,33 @@ CREATE TABLE IF NOT EXISTS public.work_logs (
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );`,
 
+    user_transactions: `-- USER TRANSACTIONS TABLE (Accounting, Income & Expenses)
+CREATE TABLE IF NOT EXISTS public.user_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('RECEIPT', 'PAYMENT', 'receipt', 'payment', 'transfer', 'TRANSFER')),
+    category TEXT DEFAULT 'General',
+    amount NUMERIC NOT NULL DEFAULT 0,
+    payment_method TEXT NOT NULL DEFAULT 'Cash',
+    description TEXT DEFAULT '',
+    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_tx_user_date ON public.user_transactions(user_id, transaction_date);
+
+ALTER TABLE public.user_transactions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "user_transactions_select" ON public.user_transactions;
+DROP POLICY IF EXISTS "user_transactions_insert" ON public.user_transactions;
+DROP POLICY IF EXISTS "user_transactions_update" ON public.user_transactions;
+DROP POLICY IF EXISTS "user_transactions_delete" ON public.user_transactions;
+
+CREATE POLICY "user_transactions_select" ON public.user_transactions FOR SELECT USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "user_transactions_insert" ON public.user_transactions FOR INSERT WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "user_transactions_update" ON public.user_transactions FOR UPDATE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "user_transactions_delete" ON public.user_transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());`,
+
     transactions: `-- TRANSACTIONS TABLE (Daybook, Expenses, Income)
 CREATE TABLE IF NOT EXISTS public.transactions (
     id TEXT PRIMARY KEY,

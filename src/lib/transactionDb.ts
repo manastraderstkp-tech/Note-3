@@ -126,6 +126,55 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
       try {
         const { filterIds } = await resolveSupabaseUserId(userId, supabase);
 
+        // Try user_transactions table first
+        let utQuery = supabase.from('user_transactions').select('*');
+        if (filterIds.length === 1) {
+          utQuery = utQuery.eq('user_id', filterIds[0]);
+        } else if (filterIds.length > 1) {
+          utQuery = utQuery.in('user_id', filterIds);
+        }
+
+        const { data: utData, error: utError } = await utQuery;
+
+        if (!utError && utData && utData.length > 0) {
+          const mapped: Transaction[] = utData
+            .filter((d: any) => !d.is_deleted && !d.id.startsWith('tx-init-'))
+            .map((d: any) => {
+              const rawType = (d.type || 'payment').toLowerCase();
+              const type: TransactionType = rawType === 'receipt' ? 'receipt' : rawType === 'transfer' ? 'transfer' : 'payment';
+              return {
+                id: d.id,
+                userId: d.user_id,
+                voucherNo: d.voucher_no || `VCH-${String(d.id).slice(0, 4)}`,
+                type,
+                date: d.transaction_date || d.date || new Date().toISOString().split('T')[0],
+                time: d.time || '12:00',
+                amount: Number(d.amount || 0),
+                category: d.category || 'General',
+                paymentMethod: d.payment_method || 'Cash',
+                transferToMethod: d.transfer_to_method,
+                partyName: d.party_name || d.description,
+                description: d.description || d.note || '',
+                receiptUrl: d.receipt_url,
+                panVatNumber: d.pan_vat_number,
+                hasTaxVat: d.has_tax_vat,
+                taxAmount: d.tax_amount ? Number(d.tax_amount) : undefined,
+                tags: d.tags || [],
+                createdAt: d.created_at,
+                updatedAt: d.updated_at || d.created_at,
+              };
+            });
+
+          try {
+            localStorage.setItem(key, JSON.stringify(mapped));
+          } catch (storageErr) {
+            console.warn('Local storage write warning:', storageErr);
+          }
+
+          return mapped;
+        }
+
+        // Secondary query: transactions table
         let query = supabase.from('transactions').select('*');
 
         if (filterIds.length === 1) {
@@ -144,8 +193,8 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
             .map((d: any) => ({
               id: d.id,
               userId: d.user_id,
-              voucherNo: d.voucher_no || `VCH-${d.id.slice(0, 4)}`,
-              type: d.type,
+              voucherNo: d.voucher_no || `VCH-${String(d.id).slice(0, 4)}`,
+              type: (d.type || 'payment').toLowerCase() as TransactionType,
               date: d.date,
               time: d.time,
               amount: Number(d.amount),
@@ -298,6 +347,28 @@ export async function saveUserTransaction(
           targetTx.receiptUrl = finalReceiptUrl;
         }
 
+        // Write to user_transactions table (primary user table requested)
+        const utPayload = {
+          id: targetTx.id,
+          user_id: primaryId,
+          type: targetTx.type.toUpperCase(), // 'RECEIPT', 'PAYMENT', 'TRANSFER'
+          category: targetTx.category || 'General',
+          amount: targetTx.amount,
+          payment_method: targetTx.paymentMethod || 'Cash',
+          description: targetTx.description || targetTx.partyName || '',
+          transaction_date: targetTx.date,
+          created_at: targetTx.createdAt,
+        };
+
+        const { error: utErr } = await supabase
+          .from('user_transactions')
+          .upsert(utPayload, { onConflict: 'id' });
+
+        if (utErr) {
+          console.warn('user_transactions upsert note:', utErr.message);
+        }
+
+        // Also write to transactions table for legacy compatibility
         const { error } = await supabase.from('transactions').upsert(
           {
             id: targetTx.id,
@@ -324,9 +395,9 @@ export async function saveUserTransaction(
           { onConflict: 'id' }
         );
 
-        if (error) {
+        if (error && utErr) {
           console.error('Supabase transaction upsert error:', error);
-          syncErrorMsg = error.message;
+          syncErrorMsg = utErr.message || error.message;
         }
       } catch (err: any) {
         console.warn('Supabase sync transaction exception:', err);
@@ -358,6 +429,11 @@ export async function deleteUserTransaction(
     const supabase = getSupabase();
     if (supabase) {
       try {
+        await supabase
+          .from('user_transactions')
+          .delete()
+          .eq('id', txId);
+
         const { error } = await supabase
           .from('transactions')
           .update({ is_deleted: true, deleted_at: new Date().toISOString() })
@@ -392,6 +468,13 @@ export function subscribeToUserTransactions(
     const channelName = `tx_live_${effectiveUserId.slice(0, 8)}_${Math.random().toString(36).substring(2, 6)}`;
     const channel = supabase
       .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_transactions' },
+        () => {
+          onDataChange();
+        }
+      )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transactions' },

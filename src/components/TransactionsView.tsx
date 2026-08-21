@@ -44,7 +44,7 @@ interface TransactionsViewProps {
 }
 
 type TabType = 'all' | 'payments' | 'receipts' | 'transfers' | 'daybook';
-type DateFilterType = 'all' | 'today' | 'yesterday' | 'month';
+type DateFilterType = 'all' | 'today' | 'yesterday' | 'this_month' | 'last_month';
 
 export const TransactionsView: React.FC<TransactionsViewProps> = ({
   userId,
@@ -59,6 +59,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   // Filters
   const [localSearch, setLocalSearch] = useState('');
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -126,11 +127,27 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     return calculateAccountingSummary(transactions);
   }, [transactions]);
 
+  // Unique Available Categories
+  const availableCategories = useMemo(() => {
+    const set = new Set<string>();
+    transactions.forEach((tx) => {
+      if (tx.category && tx.category.trim()) {
+        set.add(tx.category.trim());
+      }
+    });
+    return Array.from(set).sort();
+  }, [transactions]);
+
   // Filtered Transactions
   const filteredTransactions = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayObj = new Date();
+    const todayStr = todayObj.toISOString().split('T')[0];
     const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
     const thisMonthPrefix = todayStr.slice(0, 7);
+
+    // Calculate last month YYYY-MM prefix
+    const lastMonthObj = new Date(todayObj.getFullYear(), todayObj.getMonth() - 1, 1);
+    const lastMonthPrefix = `${lastMonthObj.getFullYear()}-${String(lastMonthObj.getMonth() + 1).padStart(2, '0')}`;
 
     return transactions.filter((tx) => {
       // Tab filter
@@ -138,10 +155,14 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       if (activeTab === 'receipts' && tx.type !== 'receipt') return false;
       if (activeTab === 'transfers' && tx.type !== 'transfer') return false;
 
+      // Category filter
+      if (selectedCategory !== 'all' && tx.category !== selectedCategory) return false;
+
       // Date filter
       if (dateFilter === 'today' && tx.date !== todayStr) return false;
       if (dateFilter === 'yesterday' && tx.date !== yesterday) return false;
-      if (dateFilter === 'month' && !tx.date.startsWith(thisMonthPrefix)) return false;
+      if ((dateFilter === 'this_month' || (dateFilter as string) === 'month') && !tx.date.startsWith(thisMonthPrefix)) return false;
+      if (dateFilter === 'last_month' && !tx.date.startsWith(lastMonthPrefix)) return false;
 
       // Search filter
       const query = localSearch.toLowerCase().trim();
@@ -160,7 +181,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     }).sort((a, b) => {
       return b.date !== a.date ? b.date.localeCompare(a.date) : (b.createdAt || '').localeCompare(a.createdAt || '');
     });
-  }, [transactions, activeTab, dateFilter, localSearch]);
+  }, [transactions, activeTab, dateFilter, selectedCategory, localSearch]);
 
   // Daybook Grouping
   const daybookGroups = useMemo(() => {
@@ -351,6 +372,48 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
       {/* Concise KPI Overview */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+        {/* Total Income / Receipts */}
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Total Income (कुल आम्दानी)
+            </span>
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
+              <ArrowDownLeft className="h-3.5 w-3.5" />
+            </div>
+          </div>
+          <div className="mt-2">
+            <h3 className="text-2xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">
+              {formatCurrencyNPR(summary.totalReceipts)}
+            </h3>
+            <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              <span>यस महिना (This Month):</span>
+              <span className="font-bold text-emerald-600 dark:text-emerald-400">{formatCurrencyNPR(summary.thisMonthReceipts)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Total Expenses / Payments */}
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Total Expenses (कुल खर्च)
+            </span>
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </div>
+          </div>
+          <div className="mt-2">
+            <h3 className="text-2xl font-black tracking-tight text-rose-600 dark:text-rose-400">
+              {formatCurrencyNPR(summary.totalPayments)}
+            </h3>
+            <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              <span>यस महिना (This Month):</span>
+              <span className="font-bold text-rose-600 dark:text-rose-400">{formatCurrencyNPR(summary.thisMonthPayments)}</span>
+            </div>
+          </div>
+        </div>
+
         {/* Net Balance */}
         <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center justify-between">
@@ -372,50 +435,71 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               {formatCurrencyNPR(summary.netBalance)}
             </h3>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              कुल {summary.transactionCount} कारोबार रेकर्ड
+              कुल {summary.transactionCount} कारोबार रेकर्डहरू
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* Monthly Summary Progress Comparison Card */}
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
+              <Sparkles className="h-3.5 w-3.5" />
+            </div>
+            <span className="text-xs font-bold text-slate-900 dark:text-white">
+              Monthly Summary Comparison (यस महिनाको आम्दानी vs खर्च तुलना)
+            </span>
+          </div>
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+            बचत: <span className={summary.thisMonthReceipts - summary.thisMonthPayments >= 0 ? 'text-emerald-600 font-bold dark:text-emerald-400' : 'text-rose-600 font-bold dark:text-rose-400'}>
+              {formatCurrencyNPR(summary.thisMonthReceipts - summary.thisMonthPayments)}
+            </span>
+          </span>
         </div>
 
-        {/* Total Income / Receipts */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Total Receipts (कुल आम्दानी)
-            </span>
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-              <ArrowDownLeft className="h-3.5 w-3.5" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <h3 className="text-2xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">
-              {formatCurrencyNPR(summary.totalReceipts)}
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              यस महिना: <span className="font-semibold text-slate-700 dark:text-slate-300">{formatCurrencyNPR(summary.thisMonthReceipts)}</span>
-            </p>
-          </div>
-        </div>
+        {/* Visual Progress Bar */}
+        {(() => {
+          const maxVal = Math.max(summary.thisMonthReceipts, summary.thisMonthPayments, 1);
+          const incPct = Math.round((summary.thisMonthReceipts / maxVal) * 100);
+          const expPct = Math.round((summary.thisMonthPayments / maxVal) * 100);
+          return (
+            <div className="space-y-2 mt-3">
+              {/* Income Progress */}
+              <div>
+                <div className="flex items-center justify-between text-[11px] font-medium mb-1">
+                  <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                    <ArrowDownLeft className="h-3 w-3" /> Income (आम्दानी): {formatCurrencyNPR(summary.thisMonthReceipts)}
+                  </span>
+                  <span className="text-slate-400">{incPct}%</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+                    style={{ width: `${incPct}%` }}
+                  />
+                </div>
+              </div>
 
-        {/* Total Expenses */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Total Expenses (कुल खर्च)
-            </span>
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
-              <ArrowUpRight className="h-3.5 w-3.5" />
+              {/* Expense Progress */}
+              <div>
+                <div className="flex items-center justify-between text-[11px] font-medium mb-1">
+                  <span className="text-rose-600 dark:text-rose-400 font-bold flex items-center gap-1">
+                    <ArrowUpRight className="h-3 w-3" /> Expenses (खर्च): {formatCurrencyNPR(summary.thisMonthPayments)}
+                  </span>
+                  <span className="text-slate-400">{expPct}%</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-rose-500 transition-all duration-500"
+                    style={{ width: `${expPct}%` }}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="mt-2">
-            <h3 className="text-2xl font-black tracking-tight text-rose-600 dark:text-rose-400">
-              {formatCurrencyNPR(summary.totalPayments)}
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              यस महिना: <span className="font-semibold text-slate-700 dark:text-slate-300">{formatCurrencyNPR(summary.thisMonthPayments)}</span>
-            </p>
-          </div>
-        </div>
+          );
+        })()}
       </div>
 
       {/* Account Balances Inline Bar */}
@@ -507,8 +591,8 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             </button>
           </div>
 
-          {/* Quick Search & Date Filter */}
-          <div className="flex items-center gap-2">
+          {/* Quick Search, Category & Date Filters */}
+          <div className="flex items-center flex-wrap gap-2">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input
@@ -516,19 +600,35 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 value={localSearch}
                 onChange={(e) => setLocalSearch(e.target.value)}
                 placeholder="खोज्नुहोस्..."
-                className="w-36 sm:w-44 rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-2.5 text-xs font-medium outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                className="w-32 sm:w-40 rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-2.5 text-xs font-medium outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               />
             </div>
 
+            {/* Category Filter */}
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-2.5 text-xs font-medium text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            >
+              <option value="all">सबै शीर्षक (All Categories)</option>
+              {availableCategories.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+
+            {/* Date Filter */}
             <select
               value={dateFilter}
               onChange={(e) => setDateFilter(e.target.value as DateFilterType)}
-              className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-2 text-xs font-medium text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-2.5 text-xs font-medium text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
             >
-              <option value="all">सबै मिति</option>
+              <option value="all">सबै मिति (All Dates)</option>
               <option value="today">आज (Today)</option>
               <option value="yesterday">हिजो (Yesterday)</option>
-              <option value="month">यस महिना (This Month)</option>
+              <option value="this_month">यस महिना (This Month)</option>
+              <option value="last_month">गत महिना (Last Month)</option>
             </select>
           </div>
         </div>
@@ -674,6 +774,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-800/60 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
                   <th className="py-3 px-4">मिति (Date)</th>
+                  <th className="py-3 px-4">प्रकार (Type)</th>
                   <th className="py-3 px-4">विवरण (Description)</th>
                   <th className="py-3 px-4">शीर्षक (Category)</th>
                   <th className="py-3 px-4">माध्यम (Mode)</th>
@@ -689,6 +790,20 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                   >
                     <td className="py-3 px-4 whitespace-nowrap font-medium text-slate-600 dark:text-slate-400">
                       {tx.date}
+                    </td>
+
+                    <td className="py-3 px-4 whitespace-nowrap">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${
+                          tx.type === 'receipt'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : tx.type === 'payment'
+                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                            : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
+                        }`}
+                      >
+                        {tx.type === 'receipt' ? 'Receipt' : tx.type === 'payment' ? 'Payment' : 'Transfer'}
+                      </span>
                     </td>
 
                     <td className="py-3 px-4">

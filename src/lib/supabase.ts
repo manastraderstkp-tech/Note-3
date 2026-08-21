@@ -2742,6 +2742,193 @@ export async function deleteTransaction(
   }
 }
 
+export interface NepseDiagnosticResult {
+  tableExists: boolean;
+  canRead: boolean;
+  canWrite: boolean;
+  isConfigured: boolean;
+  userSession: {
+    authenticated: boolean;
+    userId: string | null;
+    email: string | null;
+    role: string | null;
+  };
+  errors: {
+    connection?: string;
+    read?: string;
+    write?: string;
+  };
+  recommendations: string[];
+}
+
+/**
+ * Diagnostic utility function to verify if 'nepse_transactions' table exists
+ * in the Supabase schema and if the current user session has valid RLS access rights.
+ * Logs structured results to the browser console.
+ */
+export async function diagnoseNepseTransactionsTable(): Promise<NepseDiagnosticResult> {
+  console.group('🔍 [Supabase Diagnostic] Checking nepse_transactions Table & RLS Permissions');
+
+  const config = getStoredSupabaseConfig();
+  const client = getSupabase();
+  const result: NepseDiagnosticResult = {
+    tableExists: false,
+    canRead: false,
+    canWrite: false,
+    isConfigured: config.isConfigured,
+    userSession: {
+      authenticated: false,
+      userId: null,
+      email: null,
+      role: null,
+    },
+    errors: {},
+    recommendations: [],
+  };
+
+  console.log('1️⃣ Supabase Configuration:', {
+    url: config.url ? `${config.url.substring(0, 25)}...` : 'Not Set',
+    isConfigured: config.isConfigured,
+  });
+
+  if (!config.isConfigured || !client) {
+    result.errors.connection = 'Supabase client is not configured or initialized.';
+    result.recommendations.push('Configure a valid Supabase URL and Anon Key in Settings.');
+    console.error('❌ Supabase is NOT configured properly.');
+    console.groupEnd();
+    return result;
+  }
+
+  // 2. Check Auth Session
+  try {
+    const { data: { session }, error: authErr } = await client.auth.getSession();
+    if (session?.user) {
+      result.userSession = {
+        authenticated: true,
+        userId: session.user.id,
+        email: session.user.email || null,
+        role: session.user.role || 'authenticated',
+      };
+      console.log('2️⃣ Auth Session: AUTHENTICATED ✅', result.userSession);
+    } else {
+      console.log('2️⃣ Auth Session: ANONYMOUS / GUEST ⚠️', authErr?.message || 'No active user session');
+    }
+  } catch (err: any) {
+    console.warn('⚠️ Error checking auth session:', err?.message);
+  }
+
+  // 3. Test SELECT Access & Table Existence
+  console.log('3️⃣ Checking SELECT access on table "nepse_transactions"...');
+  try {
+    const { data, error } = await client
+      .from('nepse_transactions')
+      .select('id, user_id, symbol, transaction_type, units, price, transaction_date, created_at')
+      .limit(1);
+
+    if (error) {
+      result.errors.read = `[Code ${error.code}] ${error.message}`;
+      if (error.code === '42P01' || error.message.includes('does not exist')) {
+        result.tableExists = false;
+        console.error('❌ TABLE MISSING: "nepse_transactions" table does NOT exist in Supabase schema.');
+        result.recommendations.push('Run the provided SQL script in the SQL Schema Modal to create the "nepse_transactions" table.');
+      } else if (error.code === '42501' || error.message.includes('permission') || error.message.includes('policy')) {
+        result.tableExists = true;
+        result.canRead = false;
+        console.error('❌ RLS READ DENIED: Current user session cannot SELECT from "nepse_transactions".', error.message);
+        result.recommendations.push('Update RLS policies for "nepse_transactions" table in Supabase SQL Editor.');
+      } else {
+        result.tableExists = true;
+        console.error('❌ SELECT ERROR:', error.message);
+      }
+    } else {
+      result.tableExists = true;
+      result.canRead = true;
+      console.log(`✅ SELECT SUCCESS: "nepse_transactions" exists and read access granted. Found ${data?.length || 0} sample row(s).`);
+    }
+  } catch (err: any) {
+    result.errors.read = err?.message || 'Unknown read exception';
+    console.error('❌ SELECT Exception:', err);
+  }
+
+  // 4. Test WRITE / INSERT Access (Dry-run test row)
+  if (result.tableExists) {
+    console.log('4️⃣ Testing WRITE (INSERT & DELETE) RLS access on "nepse_transactions"...');
+    const testUserId = result.userSession.userId || 'demo-user';
+    const testUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '00000000-0000-4000-8000-000000000000';
+
+    try {
+      const { data: insertData, error: insertErr } = await client
+        .from('nepse_transactions')
+        .insert({
+          id: testUuid,
+          user_id: testUserId,
+          symbol: 'DIAG_TEST',
+          transaction_type: 'BUY',
+          units: 1,
+          price: 100,
+          transaction_date: new Date().toISOString().split('T')[0],
+        })
+        .select()
+        .single();
+
+      if (insertErr) {
+        result.canWrite = false;
+        result.errors.write = `[Code ${insertErr.code}] ${insertErr.message}`;
+        console.error('❌ WRITE DENIED: Could not insert test record into "nepse_transactions".', insertErr.message);
+        if (insertErr.code === '42501' || insertErr.message.includes('policy')) {
+          result.recommendations.push('Add an INSERT policy to "nepse_transactions" allowing "auth.uid()::text = user_id OR user_id = \'demo-user\' OR public.is_admin()".');
+        } else if (insertErr.message.includes('foreign key')) {
+          result.recommendations.push('Ensure user_id column type is TEXT rather than UUID with rigid foreign key constraints to support guest/demo users.');
+        }
+      } else {
+        result.canWrite = true;
+        console.log('✅ WRITE SUCCESS: Inserted diagnostic test row into "nepse_transactions".', insertData);
+
+        // Clean up test row
+        const { error: deleteErr } = await client
+          .from('nepse_transactions')
+          .delete()
+          .eq('id', testUuid);
+
+        if (deleteErr) {
+          console.warn('⚠️ Diagnostic cleanup note: Test row was created but delete failed:', deleteErr.message);
+        } else {
+          console.log('🧹 Cleanup: Test diagnostic row removed successfully.');
+        }
+      }
+    } catch (err: any) {
+      result.canWrite = false;
+      result.errors.write = err?.message || 'Unknown write exception';
+      console.error('❌ WRITE Exception:', err);
+    }
+  }
+
+  // 5. Final Diagnostic Summary Table
+  console.table({
+    'Table Exists': result.tableExists ? '✅ Yes' : '❌ No',
+    'SELECT (Read RLS)': result.canRead ? '✅ Granted' : '❌ Denied / Failed',
+    'INSERT (Write RLS)': result.canWrite ? '✅ Granted' : '❌ Denied / Failed',
+    'User Session': result.userSession.authenticated ? `Auth (${result.userSession.email})` : 'Anonymous / Guest',
+  });
+
+  if (result.recommendations.length > 0) {
+    console.group('🛠️ Actionable Recommendations:');
+    result.recommendations.forEach((rec, idx) => console.log(`${idx + 1}. ${rec}`));
+    console.groupEnd();
+  } else {
+    console.log('🎉 "nepse_transactions" table and RLS permissions are fully operational!');
+  }
+
+  console.groupEnd();
+
+  return result;
+}
+
+// Bind to window for direct browser console execution e.g. window.diagnoseNepseTransactionsTable()
+if (typeof window !== 'undefined') {
+  (window as any).diagnoseNepseTransactionsTable = diagnoseNepseTransactionsTable;
+}
+
 // -----------------------------------------------------------------------------
 // Unified SQL Schema & RLS Policies
 // -----------------------------------------------------------------------------
@@ -3138,7 +3325,34 @@ USING (
     sender_id = auth.uid() OR public.is_admin()
 );
 
--- 9. TRANSACTIONS TABLE (Accounting Daybook, Expense & Income Tracker)
+-- 9. USER TRANSACTIONS TABLE (Accounting, Income & Expenses)
+CREATE TABLE IF NOT EXISTS public.user_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('RECEIPT', 'PAYMENT', 'receipt', 'payment', 'transfer', 'TRANSFER')),
+    category TEXT DEFAULT 'General',
+    amount NUMERIC NOT NULL DEFAULT 0,
+    payment_method TEXT NOT NULL DEFAULT 'Cash',
+    description TEXT DEFAULT '',
+    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_tx_user_date ON public.user_transactions(user_id, transaction_date);
+
+ALTER TABLE public.user_transactions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "user_transactions_select" ON public.user_transactions;
+DROP POLICY IF EXISTS "user_transactions_insert" ON public.user_transactions;
+DROP POLICY IF EXISTS "user_transactions_update" ON public.user_transactions;
+DROP POLICY IF EXISTS "user_transactions_delete" ON public.user_transactions;
+
+CREATE POLICY "user_transactions_select" ON public.user_transactions FOR SELECT USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "user_transactions_insert" ON public.user_transactions FOR INSERT WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "user_transactions_update" ON public.user_transactions FOR UPDATE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "user_transactions_delete" ON public.user_transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+
+-- 9B. TRANSACTIONS TABLE (Accounting Daybook, Expense & Income Tracker)
 CREATE TABLE IF NOT EXISTS public.transactions (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

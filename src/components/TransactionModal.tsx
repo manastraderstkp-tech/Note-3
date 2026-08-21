@@ -35,6 +35,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [type, setType] = useState<TransactionType>(defaultType);
   const [amount, setAmount] = useState<string>('');
   const [category, setCategory] = useState('');
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
+  const [customCategoryInput, setCustomCategoryInput] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Cash');
   const [transferToMethod, setTransferToMethod] = useState<PaymentMethod>('Bank Transfer');
   const [description, setDescription] = useState('');
@@ -302,20 +304,58 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           {type !== 'transfer' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  शीर्षक (Category) <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                >
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.name}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    शीर्षक (Category) <span className="text-rose-500">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCustomCategory(!isCustomCategory);
+                      if (!isCustomCategory) {
+                        setCustomCategoryInput('');
+                      }
+                    }}
+                    className="text-[10px] font-bold text-indigo-600 hover:underline dark:text-indigo-400"
+                  >
+                    {isCustomCategory ? 'Use Preset List' : '+ Custom Category'}
+                  </button>
+                </div>
+
+                {isCustomCategory ? (
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter Custom Category e.g. Freelance, Office Rent..."
+                    value={customCategoryInput}
+                    onChange={(e) => {
+                      setCustomCategoryInput(e.target.value);
+                      setCategory(e.target.value);
+                    }}
+                    className="w-full rounded-xl border border-indigo-300 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-indigo-700 dark:bg-slate-800 dark:text-white"
+                  />
+                ) : (
+                  <select
+                    value={category}
+                    onChange={(e) => {
+                      if (e.target.value === '__CUSTOM__') {
+                        setIsCustomCategory(true);
+                        setCustomCategoryInput('');
+                        setCategory('');
+                      } else {
+                        setCategory(e.target.value);
+                      }
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.name}>
+                        {cat.name}
+                      </option>
+                    ))}
+                    <option value="__CUSTOM__">+ Custom Category...</option>
+                  </select>
+                )}
               </div>
 
               <div>

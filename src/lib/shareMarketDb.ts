@@ -1,5 +1,7 @@
-import { getSupabase, fetchTransactions, saveTransaction, deleteTransaction } from './supabase';
+import { getSupabase, fetchTransactions, saveTransaction, deleteTransaction, diagnoseNepseTransactionsTable } from './supabase';
 import { StockHoldings, TradeLog } from '../types';
+
+export { diagnoseNepseTransactionsTable };
 
 // Storage keys for local fallback
 const getPortfolioKey = (userId: string) => `ws_share_portfolio_${userId}`;
@@ -166,6 +168,9 @@ export async function fetchTrades(userId: string): Promise<{ trades: TradeLog[];
       localStorage.setItem(localKey, JSON.stringify(trades));
       return { trades, isCloud: true };
     } else {
+      if (nepseRes.error) {
+        diagnoseNepseTransactionsTable().catch(() => {});
+      }
       // Secondary fallback: share_trades table
       try {
         const { data, error } = await client
@@ -254,6 +259,9 @@ export async function saveTradeLog(
       localStorage.setItem(localKey, JSON.stringify(currentTrades));
       return { success: true };
     } else {
+      if (saveRes.error) {
+        diagnoseNepseTransactionsTable().catch(() => {});
+      }
       // Try secondary table fallback: share_trades
       try {
         const dbPayload = {

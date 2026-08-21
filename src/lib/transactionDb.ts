@@ -1,7 +1,28 @@
 import { Transaction, AccountingSummary, TransactionType, PaymentMethod } from '../types';
-import { getSupabase, getStoredSupabaseConfig } from './supabase';
+import { getSupabase, getStoredSupabaseConfig, isValidUUID } from './supabase';
 
 const STORAGE_KEY_PREFIX = 'ws_transactions_user_';
+
+async function resolveSupabaseUserId(userId: string, supabase: any): Promise<{ primaryId: string; filterIds: string[] }> {
+  const effectiveUserId = userId || 'demo-user';
+  const filterIdsSet = new Set<string>([effectiveUserId]);
+
+  if (supabase) {
+    try {
+      const { data } = await supabase.auth.getUser();
+      if (data?.user?.id) {
+        filterIdsSet.add(data.user.id);
+        if (!isValidUUID(effectiveUserId)) {
+          return { primaryId: data.user.id, filterIds: Array.from(filterIdsSet) };
+        }
+      }
+    } catch {
+      // Ignore auth getUser error
+    }
+  }
+
+  return { primaryId: effectiveUserId, filterIds: Array.from(filterIdsSet) };
+}
 
 export const EXPENSE_CATEGORIES = [
   { id: 'food_tea', name: 'Food, Tea & Snacks (चिया/खाजा)', icon: 'Utensils' },
@@ -52,12 +73,21 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
     const supabase = getSupabase();
     if (supabase) {
       try {
-        const { data, error } = await supabase
+        const { filterIds } = await resolveSupabaseUserId(userId, supabase);
+
+        let query = supabase
           .from('transactions')
           .select('*')
-          .eq('user_id', effectiveUserId)
           .or('is_deleted.is.null,is_deleted.eq.false')
           .order('date', { ascending: false });
+
+        if (filterIds.length === 1) {
+          query = query.eq('user_id', filterIds[0]);
+        } else {
+          query = query.in('user_id', filterIds);
+        }
+
+        const { data, error } = await query;
 
         if (!error && data) {
           const mapped: Transaction[] = data
@@ -129,10 +159,11 @@ export async function clearAllUserTransactions(userId: string): Promise<{ succes
     const supabase = getSupabase();
     if (supabase) {
       try {
+        const { filterIds } = await resolveSupabaseUserId(userId, supabase);
         await supabase
           .from('transactions')
           .update({ is_deleted: true, deleted_at: new Date().toISOString() })
-          .eq('user_id', effectiveUserId);
+          .in('user_id', filterIds);
       } catch (err) {
         console.warn('Supabase clear transactions error:', err);
       }
@@ -205,10 +236,12 @@ export async function saveUserTransaction(
     const supabase = getSupabase();
     if (supabase) {
       try {
+        const { primaryId } = await resolveSupabaseUserId(userId, supabase);
+
         const { error } = await supabase.from('transactions').upsert(
           {
             id: targetTx.id,
-            user_id: effectiveUserId,
+            user_id: primaryId,
             voucher_no: targetTx.voucherNo,
             type: targetTx.type,
             date: targetTx.date,
@@ -265,11 +298,13 @@ export async function deleteUserTransaction(
     const supabase = getSupabase();
     if (supabase) {
       try {
+        const { filterIds } = await resolveSupabaseUserId(userId, supabase);
+
         const { error } = await supabase
           .from('transactions')
           .update({ is_deleted: true, deleted_at: new Date().toISOString() })
           .eq('id', txId)
-          .eq('user_id', effectiveUserId);
+          .in('user_id', filterIds);
 
         if (error) {
           console.error('Supabase delete transaction error:', error);

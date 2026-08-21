@@ -227,7 +227,7 @@ CREATE TABLE IF NOT EXISTS public.work_logs (
     transactions: `-- TRANSACTIONS TABLE (Daybook, Expenses, Income)
 CREATE TABLE IF NOT EXISTS public.transactions (
     id TEXT PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    user_id TEXT NOT NULL,
     voucher_no TEXT,
     type TEXT NOT NULL CHECK (type IN ('receipt', 'payment', 'transfer')),
     date TEXT NOT NULL,
@@ -249,6 +249,15 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
+-- Ensure migration for existing user_id column
+DO $$
+BEGIN
+    ALTER TABLE public.transactions ALTER COLUMN user_id TYPE TEXT USING user_id::text;
+EXCEPTION
+    WHEN OTHERS THEN
+        NULL;
+END $$;
+
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Transactions select policy" ON public.transactions;
@@ -256,10 +265,10 @@ DROP POLICY IF EXISTS "Transactions insert policy" ON public.transactions;
 DROP POLICY IF EXISTS "Transactions update policy" ON public.transactions;
 DROP POLICY IF EXISTS "Transactions delete policy" ON public.transactions;
 
-CREATE POLICY "Transactions select policy" ON public.transactions FOR SELECT USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Transactions insert policy" ON public.transactions FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Transactions update policy" ON public.transactions FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Transactions delete policy" ON public.transactions FOR DELETE USING (auth.uid() = user_id OR public.is_admin());`,
+CREATE POLICY "Transactions select policy" ON public.transactions FOR SELECT USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "Transactions insert policy" ON public.transactions FOR INSERT WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "Transactions update policy" ON public.transactions FOR UPDATE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "Transactions delete policy" ON public.transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());`,
 
     nepse_transactions: `-- NEPSE TRANSACTIONS TABLE (Share Market / Trade Log)
 CREATE TABLE IF NOT EXISTS public.nepse_transactions (

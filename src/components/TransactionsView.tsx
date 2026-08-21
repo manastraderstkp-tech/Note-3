@@ -69,9 +69,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
 
   // Load Transactions
-  const loadData = useCallback(async (isManualRefresh = false) => {
+  const loadData = useCallback(async (isManualRefresh = false, isSilent = false) => {
     if (isManualRefresh) setRefreshing(true);
-    else setLoading(true);
+    else if (!isSilent) setLoading(true);
 
     try {
       const data = await fetchUserTransactions(userId);
@@ -90,12 +90,12 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
     // 1. Subscribe to Supabase Realtime changes for transactions table
     const unsubscribe = subscribeToUserTransactions(userId, () => {
-      loadData();
+      loadData(false, true);
     });
 
     // 2. Add focus & visibility change listeners so switching back to tab reloads remote records
     const handleFocus = () => {
-      loadData();
+      loadData(false, true);
     };
 
     window.addEventListener('focus', handleFocus);

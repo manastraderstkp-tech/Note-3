@@ -2842,80 +2842,113 @@ export async function syncSaveUserTransaction(
     return { data: null, error: 'Supabase client is not initialized.' };
   }
 
-  // 1. Resolve canonical user_id from active auth session
-  let currentAuthUserId = userId;
+  // 1. Fetch current logged-in user session using supabase.auth.getUser()
+  let loggedInUserId: string | null = null;
   try {
-    const { data: authData } = await client.auth.getUser();
-    if (authData?.user?.id) {
-      currentAuthUserId = authData.user.id;
+    const { data: authData, error: authErr } = await client.auth.getUser();
+    if (!authErr && authData?.user?.id) {
+      loggedInUserId = authData.user.id;
     }
   } catch (e) {
-    console.warn('Error resolving auth user in syncSaveUserTransaction:', e);
+    console.warn('Error fetching auth user session in syncSaveUserTransaction:', e);
   }
 
-  const effectiveUserId = currentAuthUserId || (userId && userId.trim() ? userId.trim() : 'demo-user');
+  // 2. Ensure the inserted object explicitly includes user_id: user.id (or fall back to 'demo-user' if no user session is active)
+  const effectiveUserId = loggedInUserId || (userId && userId.trim() ? userId.trim() : 'demo-user');
   
-  // 2. Ensure valid UUID for id column
-  const targetId = tx.id && isValidUUID(tx.id) ? tx.id : generateUUID();
+  // 3. Ensure valid UUID / ID for primary key
+  const targetId = tx.id && tx.id.trim() ? tx.id.trim() : generateUUID();
   const now = new Date().toISOString();
   const createdAt = tx.createdAt || now;
-  const date = tx.date || now.split('T')[0];
+  const transactionDate = tx.date || now.split('T')[0];
 
-  // 3. Prepare payload for user_transactions
-  const payload: Record<string, any> = {
+  // 4. Ensure all required fields (id, user_id, type, category, amount, payment_method, description, transaction_date) match schema
+  const payload: {
+    id: string;
+    user_id: string;
+    type: string;
+    category: string;
+    amount: number;
+    payment_method: string;
+    description: string;
+    transaction_date: string;
+    created_at?: string;
+  } = {
     id: targetId,
     user_id: effectiveUserId,
-    type: tx.type.toLowerCase(),
+    type: (tx.type || 'payment').toLowerCase(),
     category: tx.category || 'General',
     amount: Number(tx.amount) || 0,
     payment_method: tx.paymentMethod || 'Cash',
     description: tx.description || tx.partyName || tx.category || '',
-    transaction_date: date,
+    transaction_date: transactionDate,
     created_at: createdAt,
   };
 
   try {
-    let res = await client
-      .from('user_transactions')
-      .upsert(payload, { onConflict: 'id' })
-      .select()
-      .single();
+    let writeError: any = null;
 
-    // If check constraint fails for lowercase, try uppercase
-    if (res.error && (res.error.message.includes('check constraint') || res.error.message.includes('type'))) {
-      payload.type = tx.type.toUpperCase();
-      res = await client
+    if (tx.id) {
+      // Update existing record
+      const updateRes = await client
         .from('user_transactions')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
+        .update(payload)
+        .eq('id', targetId);
+
+      if (updateRes.error) {
+        // Fallback to upsert
+        const upsertRes = await client
+          .from('user_transactions')
+          .upsert(payload, { onConflict: 'id' });
+        writeError = upsertRes.error;
+      }
+    } else {
+      // Insert new record
+      let insertRes = await client
+        .from('user_transactions')
+        .insert(payload);
+
+      // If check constraint fails for lowercase, try uppercase
+      if (insertRes.error && (insertRes.error.message.includes('check constraint') || insertRes.error.message.includes('type'))) {
+        payload.type = (tx.type || 'PAYMENT').toUpperCase();
+        insertRes = await client
+          .from('user_transactions')
+          .insert(payload);
+      }
+
+      if (insertRes.error) {
+        // Fallback to upsert
+        const upsertRes = await client
+          .from('user_transactions')
+          .upsert(payload, { onConflict: 'id' });
+        writeError = upsertRes.error || insertRes.error;
+      }
     }
 
-    if (res.error) {
-      console.error('[Supabase Error] user_transactions upsert failed:', res.error);
-      return { data: null, error: res.error.message };
+    if (writeError) {
+      console.error('[Supabase Error] user_transactions write failed:', writeError);
+      return { data: null, error: writeError.message };
     }
 
-    const savedRow = res.data || payload;
     const mapped: Transaction = {
-      id: String(savedRow.id || targetId),
-      userId: savedRow.user_id || effectiveUserId,
+      id: targetId,
+      userId: effectiveUserId,
       voucherNo: tx.voucherNo || `VCH-${String(targetId).slice(0, 6)}`,
-      type: (savedRow.type || tx.type).toLowerCase() as TransactionType,
-      date: savedRow.transaction_date || date,
+      type: (payload.type || tx.type).toLowerCase() as TransactionType,
+      date: transactionDate,
       time: tx.time || '12:00',
-      amount: Number(savedRow.amount || tx.amount),
-      category: savedRow.category || tx.category || 'General',
-      paymentMethod: (savedRow.payment_method || tx.paymentMethod || 'Cash') as PaymentMethod,
+      amount: Number(payload.amount),
+      category: payload.category,
+      paymentMethod: payload.payment_method as PaymentMethod,
       transferToMethod: tx.transferToMethod,
       partyName: tx.partyName || tx.description,
-      description: savedRow.description || tx.description || '',
+      description: payload.description,
       receiptUrl: tx.receiptUrl,
       panVatNumber: tx.panVatNumber,
       hasTaxVat: tx.hasTaxVat,
       taxAmount: tx.taxAmount,
       tags: tx.tags || [],
-      createdAt: savedRow.created_at || createdAt,
+      createdAt,
       updatedAt: now,
     };
 

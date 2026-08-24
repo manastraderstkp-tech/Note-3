@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, DollarSign, Calendar, Tag, CreditCard, FileText, ArrowUpRight, ArrowDownLeft, RefreshCw } from 'lucide-react';
 import { UserTransaction, TransactionType } from '../types';
+import { generateUUID } from '../lib/supabase';
 
 interface TransactionModalProps {
   isOpen: boolean;
@@ -92,7 +93,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
     try {
       const tx: UserTransaction = {
-        id: initialTransaction ? initialTransaction.id : `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        id: initialTransaction ? initialTransaction.id : generateUUID(),
         userId: userId,
         type: type,
         category: finalCategory,

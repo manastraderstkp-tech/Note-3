@@ -1489,7 +1489,6 @@ export async function syncSaveTransaction(
   if (client) {
     try {
       const payload: Record<string, any> = {
-        id: tx.id,
         user_id: userId,
         type: tx.type,
         category: tx.category || 'General',
@@ -1498,6 +1497,9 @@ export async function syncSaveTransaction(
         description: tx.description || '',
         transaction_date: tx.transactionDate || new Date().toISOString().split('T')[0],
       };
+      if (tx.id && isValidUUID(tx.id)) {
+        payload.id = tx.id;
+      }
 
       const { data, error } = await client
         .from('user_transactions')

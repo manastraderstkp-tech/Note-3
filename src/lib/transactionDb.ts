@@ -1,5 +1,14 @@
 import { Transaction, AccountingSummary, TransactionType, PaymentMethod } from '../types';
-import { getSupabase, getStoredSupabaseConfig, isValidUUID } from './supabase';
+import {
+  getSupabase,
+  getStoredSupabaseConfig,
+  isValidUUID,
+  generateUUID,
+  syncFetchUserTransactions,
+  syncSaveUserTransaction,
+  syncDeleteUserTransaction,
+  syncClearUserTransactions
+} from './supabase';
 
 const STORAGE_KEY_PREFIX = 'ws_transactions_user_';
 
@@ -12,9 +21,7 @@ async function resolveSupabaseUserId(userId: string, supabase: any): Promise<{ p
       const { data } = await supabase.auth.getUser();
       if (data?.user?.id) {
         filterIdsSet.add(data.user.id);
-        if (isValidUUID(effectiveUserId)) {
-          return { primaryId: effectiveUserId, filterIds: Array.from(filterIdsSet) };
-        }
+        return { primaryId: data.user.id, filterIds: Array.from(filterIdsSet) };
       }
     } catch {
       // Ignore auth getUser error
@@ -118,125 +125,33 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
   const effectiveUserId = (userId && userId.trim()) ? userId.trim() : 'demo-user';
   const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
 
-  // Priority 1: Fetch from Supabase if configured so other browsers get updated records
+  // Priority 1: Direct fetch from Supabase user_transactions table
   const { isConfigured } = getStoredSupabaseConfig();
   if (isConfigured) {
-    const supabase = getSupabase();
-    if (supabase) {
-      try {
-        const { filterIds } = await resolveSupabaseUserId(userId, supabase);
-
-        // Try user_transactions table first
-        let utQuery = supabase.from('user_transactions').select('*');
-        if (filterIds.length === 1) {
-          utQuery = utQuery.eq('user_id', filterIds[0]);
-        } else if (filterIds.length > 1) {
-          utQuery = utQuery.in('user_id', filterIds);
+    try {
+      const result = await syncFetchUserTransactions(userId);
+      if (!result.error && result.data && result.data.length > 0) {
+        try {
+          localStorage.setItem(key, JSON.stringify(result.data));
+        } catch {
+          // ignore
         }
-
-        const { data: utData, error: utError } = await utQuery;
-
-        if (!utError && utData && utData.length > 0) {
-          const mapped: Transaction[] = utData
-            .filter((d: any) => !d.is_deleted && !d.id.startsWith('tx-init-'))
-            .map((d: any) => {
-              const rawType = (d.type || 'payment').toLowerCase();
-              const type: TransactionType = rawType === 'receipt' ? 'receipt' : rawType === 'transfer' ? 'transfer' : 'payment';
-              return {
-                id: d.id,
-                userId: d.user_id,
-                voucherNo: d.voucher_no || `VCH-${String(d.id).slice(0, 4)}`,
-                type,
-                date: d.transaction_date || d.date || new Date().toISOString().split('T')[0],
-                time: d.time || '12:00',
-                amount: Number(d.amount || 0),
-                category: d.category || 'General',
-                paymentMethod: d.payment_method || 'Cash',
-                transferToMethod: d.transfer_to_method,
-                partyName: d.party_name || d.description,
-                description: d.description || d.note || '',
-                receiptUrl: d.receipt_url,
-                panVatNumber: d.pan_vat_number,
-                hasTaxVat: d.has_tax_vat,
-                taxAmount: d.tax_amount ? Number(d.tax_amount) : undefined,
-                tags: d.tags || [],
-                createdAt: d.created_at,
-                updatedAt: d.updated_at || d.created_at,
-              };
-            });
-
-          try {
-            localStorage.setItem(key, JSON.stringify(mapped));
-          } catch (storageErr) {
-            console.warn('Local storage write warning:', storageErr);
-          }
-
-          return mapped;
-        }
-
-        // Secondary query: transactions table
-        let query = supabase.from('transactions').select('*');
-
-        if (filterIds.length === 1) {
-          query = query.eq('user_id', filterIds[0]);
-        } else if (filterIds.length > 1) {
-          query = query.in('user_id', filterIds);
-        }
-
-        query = query.order('date', { ascending: false });
-
-        const { data, error } = await query;
-
-        if (!error && data) {
-          const mapped: Transaction[] = data
-            .filter((d: any) => !d.is_deleted && !d.id.startsWith('tx-init-'))
-            .map((d: any) => ({
-              id: d.id,
-              userId: d.user_id,
-              voucherNo: d.voucher_no || `VCH-${String(d.id).slice(0, 4)}`,
-              type: (d.type || 'payment').toLowerCase() as TransactionType,
-              date: d.date,
-              time: d.time,
-              amount: Number(d.amount),
-              category: d.category,
-              paymentMethod: d.payment_method,
-              transferToMethod: d.transfer_to_method,
-              partyName: d.party_name,
-              description: d.description || '',
-              receiptUrl: d.receipt_url,
-              panVatNumber: d.pan_vat_number,
-              hasTaxVat: d.has_tax_vat,
-              taxAmount: d.tax_amount ? Number(d.tax_amount) : undefined,
-              tags: d.tags || [],
-              createdAt: d.created_at,
-              updatedAt: d.updated_at,
-            }));
-          
-          // Cache in local storage for offline fallback
-          try {
-            localStorage.setItem(key, JSON.stringify(mapped));
-          } catch (storageErr) {
-            console.warn('Local storage write warning:', storageErr);
-          }
-
-          return mapped;
-        } else if (error) {
-          console.warn('Supabase select transactions error:', error.message);
-        }
-      } catch (err) {
-        console.warn('Supabase fetch transactions exception, falling back to local storage:', err);
+        return result.data;
+      } else if (result.error) {
+        console.warn('[fetchUserTransactions] Supabase fetch error:', result.error);
       }
+    } catch (err) {
+      console.warn('[fetchUserTransactions] Exception querying Supabase:', err);
     }
   }
 
-  // Priority 2: Fallback to localStorage if offline or Supabase fails
+  // Priority 2: Fallback to localStorage
   try {
     const raw = localStorage.getItem(key);
     if (raw !== null) {
       const parsed: Transaction[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        const filtered = parsed.filter((t) => !t.isDeleted && !t.id.startsWith('tx-init-'));
-        return filtered;
+        return parsed.filter((t) => !t.isDeleted && !t.id.startsWith('tx-init-'));
       }
     }
   } catch (e) {
@@ -246,7 +161,7 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
   return [];
 }
 
-export async function clearAllUserTransactions(userId: string): Promise<{ success: boolean }> {
+export async function clearAllUserTransactions(userId: string): Promise<{ success: boolean; error?: string }> {
   const effectiveUserId = (userId && userId.trim()) ? userId.trim() : 'demo-user';
   const key = `${STORAGE_KEY_PREFIX}${effectiveUserId}`;
 
@@ -254,17 +169,14 @@ export async function clearAllUserTransactions(userId: string): Promise<{ succes
 
   const { isConfigured } = getStoredSupabaseConfig();
   if (isConfigured) {
-    const supabase = getSupabase();
-    if (supabase) {
-      try {
-        const { filterIds } = await resolveSupabaseUserId(userId, supabase);
-        await supabase
-          .from('transactions')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
-          .in('user_id', filterIds);
-      } catch (err) {
-        console.warn('Supabase clear transactions error:', err);
+    try {
+      const res = await syncClearUserTransactions(userId);
+      if (res.error) {
+        return { success: false, error: res.error };
       }
+    } catch (err: any) {
+      console.error('[clearAllUserTransactions] Supabase clear error:', err);
+      return { success: false, error: err?.message };
     }
   }
 
@@ -282,14 +194,19 @@ export async function saveUserTransaction(
   const currentList = await fetchUserTransactions(effectiveUserId);
   const now = new Date().toISOString();
 
+  // Resolve valid ID (UUID for database compatibility)
+  let targetId = id;
+  if (!targetId || !isValidUUID(targetId)) {
+    targetId = generateUUID();
+  }
+
   let targetTx: Transaction;
 
   if (id) {
-    // Updating existing
     const existingIndex = currentList.findIndex((t) => t.id === id);
     targetTx = {
       ...tx,
-      id,
+      id: targetId,
       userId: effectiveUserId,
       createdAt: existingIndex >= 0 ? currentList[existingIndex].createdAt : now,
       updatedAt: now,
@@ -300,14 +217,12 @@ export async function saveUserTransaction(
       currentList.unshift(targetTx);
     }
   } else {
-    // Creating new
-    const newId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const prefix = tx.type === 'receipt' ? 'RCP' : tx.type === 'payment' ? 'PYM' : 'TRF';
     const autoVoucher = tx.voucherNo?.trim() || `${prefix}-${Math.floor(100 + Math.random() * 900)}`;
 
     targetTx = {
       ...tx,
-      id: newId,
+      id: targetId,
       userId: effectiveUserId,
       voucherNo: autoVoucher,
       createdAt: now,
@@ -316,27 +231,24 @@ export async function saveUserTransaction(
     currentList.unshift(targetTx);
   }
 
-  // Sort by date desc then createdAt desc
+  // Sort list
   currentList.sort((a, b) => {
-    if (b.date !== a.date) {
-      return b.date.localeCompare(a.date);
-    }
+    if (b.date !== a.date) return b.date.localeCompare(a.date);
     return (b.createdAt || '').localeCompare(a.createdAt || '');
   });
 
+  // Local cache update
   localStorage.setItem(key, JSON.stringify(currentList));
 
-  // Sync to Supabase if configured
+  // Direct Supabase Persistence
   const { isConfigured } = getStoredSupabaseConfig();
-  let syncErrorMsg: string | undefined = undefined;
-
   if (isConfigured) {
     const supabase = getSupabase();
     if (supabase) {
       try {
         const { primaryId } = await resolveSupabaseUserId(userId, supabase);
 
-        // Safely upload image if base64 to avoid POST payload overflow
+        // Upload receipt if base64
         const finalReceiptUrl = await uploadReceiptToSupabaseStorage(
           targetTx.receiptUrl,
           primaryId,
@@ -347,66 +259,23 @@ export async function saveUserTransaction(
           targetTx.receiptUrl = finalReceiptUrl;
         }
 
-        // Write to user_transactions table (primary user table requested)
-        const utPayload = {
-          id: targetTx.id,
-          user_id: primaryId,
-          type: targetTx.type.toUpperCase(), // 'RECEIPT', 'PAYMENT', 'TRANSFER'
-          category: targetTx.category || 'General',
-          amount: targetTx.amount,
-          payment_method: targetTx.paymentMethod || 'Cash',
-          description: targetTx.description || targetTx.partyName || '',
-          transaction_date: targetTx.date,
-          created_at: targetTx.createdAt,
-        };
-
-        const { error: utErr } = await supabase
-          .from('user_transactions')
-          .upsert(utPayload, { onConflict: 'id' });
-
-        if (utErr) {
-          console.warn('user_transactions upsert note:', utErr.message);
+        const syncResult = await syncSaveUserTransaction(userId, targetTx);
+        if (syncResult.error) {
+          console.error('[saveUserTransaction] Supabase sync failure:', syncResult.error);
+          return { success: false, error: syncResult.error, transaction: targetTx };
         }
 
-        // Also write to transactions table for legacy compatibility
-        const { error } = await supabase.from('transactions').upsert(
-          {
-            id: targetTx.id,
-            user_id: primaryId,
-            voucher_no: targetTx.voucherNo,
-            type: targetTx.type,
-            date: targetTx.date,
-            time: targetTx.time || null,
-            amount: targetTx.amount,
-            category: targetTx.category,
-            payment_method: targetTx.paymentMethod,
-            transfer_to_method: targetTx.transferToMethod || null,
-            party_name: targetTx.partyName || null,
-            description: targetTx.description || '',
-            receipt_url: targetTx.receiptUrl || null,
-            pan_vat_number: targetTx.panVatNumber || null,
-            has_tax_vat: targetTx.hasTaxVat || false,
-            tax_amount: targetTx.taxAmount || null,
-            tags: targetTx.tags || [],
-            is_deleted: false,
-            updated_at: targetTx.updatedAt,
-            created_at: targetTx.createdAt,
-          },
-          { onConflict: 'id' }
-        );
-
-        if (error && utErr) {
-          console.error('Supabase transaction upsert error:', error);
-          syncErrorMsg = utErr.message || error.message;
+        if (syncResult.data) {
+          targetTx = syncResult.data;
         }
       } catch (err: any) {
-        console.warn('Supabase sync transaction exception:', err);
-        syncErrorMsg = err?.message || 'Failed to sync with Supabase';
+        console.error('[saveUserTransaction] Exception syncing with Supabase:', err);
+        return { success: false, error: err?.message || 'Failed to sync with Supabase', transaction: targetTx };
       }
     }
   }
 
-  return { success: true, transaction: targetTx, error: syncErrorMsg };
+  return { success: true, transaction: targetTx };
 }
 
 export async function deleteUserTransaction(
@@ -423,34 +292,20 @@ export async function deleteUserTransaction(
   localStorage.setItem(key, JSON.stringify(updatedList));
 
   const { isConfigured } = getStoredSupabaseConfig();
-  let errorMsg: string | undefined;
-
   if (isConfigured) {
-    const supabase = getSupabase();
-    if (supabase) {
-      try {
-        await supabase
-          .from('user_transactions')
-          .delete()
-          .eq('id', txId);
-
-        const { error } = await supabase
-          .from('transactions')
-          .update({ is_deleted: true, deleted_at: new Date().toISOString() })
-          .eq('id', txId);
-
-        if (error) {
-          console.error('Supabase delete transaction error:', error);
-          errorMsg = error.message;
-        }
-      } catch (err: any) {
-        console.warn('Supabase delete transaction failed:', err);
-        errorMsg = err?.message;
+    try {
+      const res = await syncDeleteUserTransaction(userId, txId);
+      if (res.error) {
+        console.error('[deleteUserTransaction] Supabase delete error:', res.error);
+        return { success: false, error: res.error, deletedItem: target };
       }
+    } catch (err: any) {
+      console.error('[deleteUserTransaction] Exception during Supabase delete:', err);
+      return { success: false, error: err?.message, deletedItem: target };
     }
   }
 
-  return { success: true, deletedItem: target, error: errorMsg };
+  return { success: true, deletedItem: target };
 }
 
 export function subscribeToUserTransactions(
@@ -464,56 +319,31 @@ export function subscribeToUserTransactions(
   if (!supabase) return () => {};
 
   try {
-    const effectiveUserId = userId || 'demo-user';
-    const channelName = `user_transactions_changes_${effectiveUserId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-
     const channel = supabase
-      .channel(channelName)
+      .channel('public:user_transactions')
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'user_transactions',
-          filter: `user_id=eq.${effectiveUserId}`,
-        },
+        { event: 'INSERT', schema: 'public', table: 'user_transactions' },
         () => onDataChange()
       )
       .on(
         'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'user_transactions',
-          filter: `user_id=eq.${effectiveUserId}`,
-        },
+        { event: 'UPDATE', schema: 'public', table: 'user_transactions' },
         () => onDataChange()
       )
       .on(
         'postgres_changes',
-        {
-          event: 'DELETE',
-          schema: 'public',
-          table: 'user_transactions',
-          filter: `user_id=eq.${effectiveUserId}`,
-        },
+        { event: 'DELETE', schema: 'public', table: 'user_transactions' },
         () => onDataChange()
       )
-      // Fallback unfiltered listener for user_transactions in case user_id isn't matched
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'user_transactions' },
         () => onDataChange()
       )
-      // Legacy transactions table fallback
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'transactions' },
-        () => onDataChange()
-      )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log(`[Supabase Realtime] Subscribed to channel ${channelName}`);
+          console.log('[Supabase Realtime] Subscribed to public:user_transactions channel');
         }
       });
 

@@ -26,13 +26,13 @@ import {
   saveUserTransaction,
   deleteUserTransaction,
   clearAllUserTransactions,
-  subscribeToUserTransactions,
   calculateAccountingSummary,
   formatCurrencyNPR,
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
   PAYMENT_METHODS
 } from '../lib/transactionDb';
+import { getSupabase } from '../lib/supabase';
 import { TransactionModal } from './TransactionModal';
 import { TransactionVoucherModal } from './TransactionVoucherModal';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
@@ -69,7 +69,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [deletingTx, setDeletingTx] = useState<Transaction | null>(null);
   const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
 
-  // Load Transactions
+  // Load Transactions directly from Supabase
   const loadData = useCallback(async (isManualRefresh = false, isSilent = false) => {
     if (isManualRefresh) setRefreshing(true);
     else if (!isSilent) setLoading(true);
@@ -77,9 +77,11 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     try {
       const data = await fetchUserTransactions(userId);
       setTransactions(data);
-    } catch (e) {
-      console.error('Error loading transactions:', e);
-      onShowToast('Failed to load transaction records from server.', 'error');
+    } catch (e: any) {
+      console.error('[TransactionsView] Error loading transactions from Supabase:', e);
+      if (!isSilent) {
+        onShowToast(e?.message || 'Failed to load transaction records from Supabase.', 'error');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -87,28 +89,81 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   }, [userId, onShowToast]);
 
   useEffect(() => {
-    loadData();
+    let isMounted = true;
+    const supabaseClient = getSupabase();
 
-    // 1. Subscribe to Supabase Realtime changes for transactions table
-    const unsubscribe = subscribeToUserTransactions(userId, () => {
-      loadData(false, true);
-    });
+    // 1. Initial Fetch on mount
+    loadData(false, false);
 
-    // 2. Add focus & visibility change listeners so switching back to tab reloads remote records
+    // 2. Listen to Auth State Changes
+    let authSubscription: { unsubscribe: () => void } | null = null;
+    if (supabaseClient?.auth) {
+      const { data: authListener } = supabaseClient.auth.onAuthStateChange((event, session) => {
+        if (!isMounted) return;
+        console.log('[TransactionsView] onAuthStateChange event:', event, 'User ID:', session?.user?.id);
+        loadData(false, true);
+      });
+      authSubscription = authListener?.subscription || null;
+    }
+
+    // 3. Supabase Realtime Subscription listening to INSERT, UPDATE, and DELETE changes
+    let channel: any = null;
+    if (supabaseClient) {
+      channel = supabaseClient
+        .channel('public:user_transactions')
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'user_transactions' },
+          (payload) => {
+            console.log('[Realtime] Transaction inserted:', payload);
+            if (isMounted) loadData(false, true);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'user_transactions' },
+          (payload) => {
+            console.log('[Realtime] Transaction updated:', payload);
+            if (isMounted) loadData(false, true);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'user_transactions' },
+          (payload) => {
+            console.log('[Realtime] Transaction deleted:', payload);
+            if (isMounted) loadData(false, true);
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('[Supabase Realtime] Subscribed to public:user_transactions');
+          }
+        });
+    }
+
+    // 4. Reload on window focus & document visibility change
     const handleFocus = () => {
-      loadData(false, true);
+      if (isMounted) loadData(false, true);
     };
 
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleFocus);
 
-    // 3. Periodic silent polling every 5 seconds to guarantee cross-browser sync
+    // 5. Periodic polling (every 6 seconds) to ensure multi-tab / multi-browser consistency
     const pollInterval = setInterval(() => {
-      loadData(false, true);
-    }, 5000);
+      if (isMounted) loadData(false, true);
+    }, 6000);
 
+    // Cleanup function
     return () => {
-      unsubscribe();
+      isMounted = false;
+      if (authSubscription) {
+        authSubscription.unsubscribe();
+      }
+      if (channel && supabaseClient) {
+        supabaseClient.removeChannel(channel);
+      }
       clearInterval(pollInterval);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleFocus);
@@ -229,39 +284,59 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     txData: Omit<Transaction, 'id' | 'createdAt' | 'userId'>,
     id?: string
   ) => {
-    const res = await saveUserTransaction(userId, txData, id);
-    if (res.success) {
-      if (res.error) {
-        onShowToast(`Saved locally. Supabase sync note: ${res.error}`, 'info');
+    try {
+      const res = await saveUserTransaction(userId, txData, id);
+      if (res.success) {
+        if (res.error) {
+          onShowToast(`Transaction saved. Notice: ${res.error}`, 'info');
+        } else {
+          onShowToast(id ? 'Transaction updated in Supabase.' : 'Transaction recorded & synced with Supabase.', 'success');
+        }
+        await loadData(false, true);
+        return { success: true };
       } else {
-        onShowToast(id ? 'Transaction updated & synced with Supabase.' : 'Transaction recorded & synced with Supabase.', 'success');
+        const errorMsg = res.error || 'Failed to save transaction to database.';
+        onShowToast(errorMsg, 'error');
+        return { success: false, error: errorMsg };
       }
-      loadData();
-      return { success: true };
+    } catch (err: any) {
+      console.error('[TransactionsView] Save transaction exception:', err);
+      const errorMsg = err?.message || 'Error occurred while saving transaction.';
+      onShowToast(errorMsg, 'error');
+      return { success: false, error: errorMsg };
     }
-    return { success: false, error: res.error };
   };
 
   const handleDeleteConfirm = async () => {
     if (!deletingTx) return;
-    const res = await deleteUserTransaction(userId, deletingTx.id);
-    if (res.success) {
-      onShowToast('Transaction deleted.', 'info');
-      setDeletingTx(null);
-      loadData();
-    } else {
-      onShowToast('Failed to delete transaction.', 'error');
+    try {
+      const res = await deleteUserTransaction(userId, deletingTx.id);
+      if (res.success) {
+        onShowToast('Transaction deleted from Supabase.', 'info');
+        setDeletingTx(null);
+        await loadData(false, true);
+      } else {
+        onShowToast(res.error || 'Failed to delete transaction from Supabase.', 'error');
+      }
+    } catch (err: any) {
+      console.error('[TransactionsView] Delete transaction exception:', err);
+      onShowToast(err?.message || 'Error occurred while deleting transaction.', 'error');
     }
   };
 
   const handleClearAllConfirm = async () => {
-    const res = await clearAllUserTransactions(userId);
-    if (res.success) {
-      onShowToast('All transactions deleted. Balance reset to Rs. 0', 'info');
-      setIsClearAllModalOpen(false);
-      loadData();
-    } else {
-      onShowToast('Failed to clear transactions.', 'error');
+    try {
+      const res = await clearAllUserTransactions(userId);
+      if (res.success) {
+        onShowToast('All transactions cleared. Balance reset to Rs. 0', 'info');
+        setIsClearAllModalOpen(false);
+        await loadData(false, true);
+      } else {
+        onShowToast(res.error || 'Failed to clear transactions from Supabase.', 'error');
+      }
+    } catch (err: any) {
+      console.error('[TransactionsView] Clear transactions exception:', err);
+      onShowToast(err?.message || 'Error occurred while clearing transactions.', 'error');
     }
   };
 

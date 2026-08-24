@@ -16,6 +16,9 @@ import {
   ChatMessage,
   ChatUser,
   MessageReaction,
+  Transaction,
+  TransactionType,
+  PaymentMethod,
 } from '../types';
 import {
   SUPABASE_URL,
@@ -145,6 +148,17 @@ export function formatSupabaseAuthError(err: unknown, defaultMsg: string): strin
 export function isValidUUID(str: string | undefined | null): boolean {
   if (!str || typeof str !== 'string') return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+}
+
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -2739,6 +2753,283 @@ export async function deleteTransaction(
   } catch (err: any) {
     console.error('Exception deleting nepse_transaction:', err);
     return { success: false, error: err?.message || 'Failed to delete transaction' };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// User Transactions (Accounting / Daybook) Operations
+// -----------------------------------------------------------------------------
+
+export async function syncFetchUserTransactions(
+  userId: string
+): Promise<{ data: Transaction[]; isCloud: boolean; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { data: [], isCloud: false, error: 'Supabase client is not initialized.' };
+  }
+
+  // Resolve current authenticated user ID
+  let currentAuthUserId = userId;
+  try {
+    const { data: authData } = await client.auth.getUser();
+    if (authData?.user?.id) {
+      currentAuthUserId = authData.user.id;
+    }
+  } catch (e) {
+    console.warn('Error checking auth user in syncFetchUserTransactions:', e);
+  }
+
+  const effectiveUserId = currentAuthUserId || (userId && userId.trim() ? userId.trim() : 'demo-user');
+  const filterIds = Array.from(new Set([effectiveUserId, userId, 'demo-user'].filter(Boolean)));
+
+  try {
+    let query = client.from('user_transactions').select('*');
+    if (filterIds.length === 1) {
+      query = query.eq('user_id', filterIds[0]);
+    } else {
+      query = query.in('user_id', filterIds);
+    }
+    query = query.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('[Supabase Error] syncFetchUserTransactions:', error.message);
+      return { data: [], isCloud: false, error: error.message };
+    }
+
+    const mapped: Transaction[] = (data || [])
+      .filter((d: any) => !d.is_deleted)
+      .map((d: any) => {
+        const rawType = (d.type || 'payment').toLowerCase();
+        const type: TransactionType = rawType === 'receipt' ? 'receipt' : rawType === 'transfer' ? 'transfer' : 'payment';
+        return {
+          id: String(d.id),
+          userId: d.user_id,
+          voucherNo: d.voucher_no || `VCH-${String(d.id).slice(0, 6)}`,
+          type,
+          date: d.transaction_date || d.date || new Date().toISOString().split('T')[0],
+          time: d.time || '12:00',
+          amount: Number(d.amount || 0),
+          category: d.category || 'General',
+          paymentMethod: (d.payment_method || 'Cash') as PaymentMethod,
+          transferToMethod: d.transfer_to_method,
+          partyName: d.party_name || d.description,
+          description: d.description || d.party_name || '',
+          receiptUrl: d.receipt_url,
+          panVatNumber: d.pan_vat_number,
+          hasTaxVat: Boolean(d.has_tax_vat),
+          taxAmount: d.tax_amount ? Number(d.tax_amount) : undefined,
+          tags: Array.isArray(d.tags) ? d.tags : [],
+          createdAt: d.created_at || new Date().toISOString(),
+          updatedAt: d.updated_at || d.created_at || new Date().toISOString(),
+        };
+      });
+
+    return { data: mapped, isCloud: true, error: null };
+  } catch (err: any) {
+    console.error('[Supabase Exception] syncFetchUserTransactions:', err);
+    return { data: [], isCloud: false, error: err?.message || 'Failed to fetch transactions' };
+  }
+}
+
+export async function syncSaveUserTransaction(
+  userId: string,
+  tx: Omit<Transaction, 'id' | 'createdAt' | 'userId'> & { id?: string; createdAt?: string; userId?: string }
+): Promise<{ data: Transaction | null; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { data: null, error: 'Supabase client is not initialized.' };
+  }
+
+  // 1. Resolve canonical user_id from active auth session
+  let currentAuthUserId = userId;
+  try {
+    const { data: authData } = await client.auth.getUser();
+    if (authData?.user?.id) {
+      currentAuthUserId = authData.user.id;
+    }
+  } catch (e) {
+    console.warn('Error resolving auth user in syncSaveUserTransaction:', e);
+  }
+
+  const effectiveUserId = currentAuthUserId || (userId && userId.trim() ? userId.trim() : 'demo-user');
+  
+  // 2. Ensure valid UUID for id column
+  const targetId = tx.id && isValidUUID(tx.id) ? tx.id : generateUUID();
+  const now = new Date().toISOString();
+  const createdAt = tx.createdAt || now;
+  const date = tx.date || now.split('T')[0];
+
+  // 3. Prepare payload for user_transactions
+  const payload: Record<string, any> = {
+    id: targetId,
+    user_id: effectiveUserId,
+    type: tx.type.toLowerCase(),
+    category: tx.category || 'General',
+    amount: Number(tx.amount) || 0,
+    payment_method: tx.paymentMethod || 'Cash',
+    description: tx.description || tx.partyName || tx.category || '',
+    transaction_date: date,
+    created_at: createdAt,
+  };
+
+  try {
+    let res = await client
+      .from('user_transactions')
+      .upsert(payload, { onConflict: 'id' })
+      .select()
+      .single();
+
+    // If check constraint fails for lowercase, try uppercase
+    if (res.error && (res.error.message.includes('check constraint') || res.error.message.includes('type'))) {
+      payload.type = tx.type.toUpperCase();
+      res = await client
+        .from('user_transactions')
+        .upsert(payload, { onConflict: 'id' })
+        .select()
+        .single();
+    }
+
+    if (res.error) {
+      console.error('[Supabase Error] user_transactions upsert failed:', res.error);
+      return { data: null, error: res.error.message };
+    }
+
+    const savedRow = res.data || payload;
+    const mapped: Transaction = {
+      id: String(savedRow.id || targetId),
+      userId: savedRow.user_id || effectiveUserId,
+      voucherNo: tx.voucherNo || `VCH-${String(targetId).slice(0, 6)}`,
+      type: (savedRow.type || tx.type).toLowerCase() as TransactionType,
+      date: savedRow.transaction_date || date,
+      time: tx.time || '12:00',
+      amount: Number(savedRow.amount || tx.amount),
+      category: savedRow.category || tx.category || 'General',
+      paymentMethod: (savedRow.payment_method || tx.paymentMethod || 'Cash') as PaymentMethod,
+      transferToMethod: tx.transferToMethod,
+      partyName: tx.partyName || tx.description,
+      description: savedRow.description || tx.description || '',
+      receiptUrl: tx.receiptUrl,
+      panVatNumber: tx.panVatNumber,
+      hasTaxVat: tx.hasTaxVat,
+      taxAmount: tx.taxAmount,
+      tags: tx.tags || [],
+      createdAt: savedRow.created_at || createdAt,
+      updatedAt: now,
+    };
+
+    // Mirror to legacy transactions table for backward compatibility (non-blocking)
+    try {
+      await client.from('transactions').upsert({
+        id: mapped.id,
+        user_id: effectiveUserId,
+        voucher_no: mapped.voucherNo,
+        type: mapped.type,
+        date: mapped.date,
+        time: mapped.time,
+        amount: mapped.amount,
+        category: mapped.category,
+        payment_method: mapped.paymentMethod,
+        transfer_to_method: mapped.transferToMethod || null,
+        party_name: mapped.partyName || null,
+        description: mapped.description,
+        receipt_url: mapped.receiptUrl || null,
+        pan_vat_number: mapped.panVatNumber || null,
+        has_tax_vat: mapped.hasTaxVat || false,
+        tax_amount: mapped.taxAmount || null,
+        tags: mapped.tags || [],
+        is_deleted: false,
+        created_at: mapped.createdAt,
+        updated_at: mapped.updatedAt,
+      }, { onConflict: 'id' });
+    } catch {
+      // Non-blocking mirror
+    }
+
+    return { data: mapped, error: null };
+  } catch (err: any) {
+    console.error('[Supabase Exception] syncSaveUserTransaction:', err);
+    return { data: null, error: err?.message || 'Database error occurred' };
+  }
+}
+
+export async function syncDeleteUserTransaction(
+  userId: string,
+  txId: string
+): Promise<{ success: boolean; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { success: false, error: 'Supabase client is not initialized.' };
+  }
+
+  try {
+    const { error: utErr } = await client
+      .from('user_transactions')
+      .delete()
+      .eq('id', txId);
+
+    if (utErr) {
+      console.error('[Supabase Error] syncDeleteUserTransaction:', utErr);
+      return { success: false, error: utErr.message };
+    }
+
+    // Mirror delete to legacy transactions table
+    try {
+      await client.from('transactions').delete().eq('id', txId);
+    } catch {
+      // ignore
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('[Supabase Exception] syncDeleteUserTransaction:', err);
+    return { success: false, error: err?.message || 'Failed to delete transaction' };
+  }
+}
+
+export async function syncClearUserTransactions(
+  userId: string
+): Promise<{ success: boolean; error: string | null }> {
+  const client = getSupabase();
+  if (!client) {
+    return { success: false, error: 'Supabase client is not initialized.' };
+  }
+
+  let currentAuthUserId = userId;
+  try {
+    const { data: authData } = await client.auth.getUser();
+    if (authData?.user?.id) {
+      currentAuthUserId = authData.user.id;
+    }
+  } catch (e) {
+    console.warn('Error in syncClearUserTransactions:', e);
+  }
+
+  const effectiveUserId = currentAuthUserId || (userId && userId.trim() ? userId.trim() : 'demo-user');
+  const filterIds = Array.from(new Set([effectiveUserId, userId, 'demo-user'].filter(Boolean)));
+
+  try {
+    const { error } = await client
+      .from('user_transactions')
+      .delete()
+      .in('user_id', filterIds);
+
+    if (error) {
+      console.error('[Supabase Error] syncClearUserTransactions:', error);
+      return { success: false, error: error.message };
+    }
+
+    try {
+      await client.from('transactions').delete().in('user_id', filterIds);
+    } catch {
+      // ignore
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('[Supabase Exception] syncClearUserTransactions:', err);
+    return { success: false, error: err?.message || 'Failed to clear transactions' };
   }
 }
 

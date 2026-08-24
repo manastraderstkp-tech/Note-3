@@ -1404,9 +1404,21 @@ export const fetchTodos = syncFetchTodos;
 export const getUserTransactionsKey = (userId: string) => `ws_transactions_${userId}`;
 
 export async function syncFetchTransactions(
-  userId: string
+  inputUserId?: string | null
 ): Promise<{ transactions: UserTransaction[]; isCloud: boolean }> {
   const client = getSupabase();
+  let userId = inputUserId;
+  if (client) {
+    try {
+      const { data: { user } } = await client.auth.getUser();
+      userId = user ? user.id : (inputUserId || 'demo-user');
+    } catch {
+      userId = inputUserId || 'demo-user';
+    }
+  } else {
+    userId = inputUserId || 'demo-user';
+  }
+
   const localKey = getUserTransactionsKey(userId);
 
   if (client) {
@@ -1456,10 +1468,22 @@ export async function syncFetchTransactions(
 }
 
 export async function syncSaveTransaction(
-  userId: string,
+  inputUserId: string | null | undefined,
   tx: UserTransaction
 ): Promise<{ data: UserTransaction | null; error: string | null }> {
   const client = getSupabase();
+  let userId = inputUserId;
+  if (client) {
+    try {
+      const { data: { user } } = await client.auth.getUser();
+      userId = user ? user.id : (inputUserId || 'demo-user');
+    } catch {
+      userId = inputUserId || 'demo-user';
+    }
+  } else {
+    userId = inputUserId || 'demo-user';
+  }
+
   const localKey = getUserTransactionsKey(userId);
 
   if (client) {
@@ -1508,9 +1532,11 @@ export async function syncSaveTransaction(
         return { data: saved, error: null };
       } else if (error) {
         console.warn('Supabase transaction save error:', error.message);
+        return { data: null, error: error.message };
       }
     } catch (e: any) {
       console.warn('Exception saving transaction in Supabase:', e);
+      return { data: null, error: e?.message || 'Failed to save transaction to Supabase' };
     }
   }
 

@@ -3,7 +3,7 @@ import {
   LayoutDashboard,
   FileText,
   CheckSquare,
-  Clock,
+  Wallet,
   Layers,
   Sparkles,
   X,
@@ -11,7 +11,6 @@ import {
   Flame,
   CheckCircle,
   FolderOpen,
-  TrendingUp,
   Database,
   KeyRound,
   ShieldCheck,
@@ -22,8 +21,6 @@ import {
   Crown,
   LogOut,
   Trash2,
-  Receipt,
-  MessageSquare
 } from 'lucide-react';
 import { NavSection, MetricStats, UserSession } from '../types';
 import { getStoredSupabaseConfig } from '../lib/supabase';
@@ -42,7 +39,7 @@ interface SidebarProps {
   onOpenSqlModal: () => void;
   onOpenSoundSettingsModal: () => void;
   onOpenDeployGuideModal: () => void;
-  onOpenExportModal: (initialType?: 'all' | 'tasks' | 'worklogs' | 'notes') => void;
+  onOpenExportModal: (initialType?: 'all' | 'tasks' | 'notes') => void;
   onOpenUserRolesModal?: () => void;
   onSignOut?: () => void;
 }
@@ -92,14 +89,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       color: 'text-indigo-500',
     },
     {
-      id: 'worklogs' as NavSection,
-      label: 'Work Logs',
-      icon: Clock,
-      badge: `${stats.hoursLoggedToday.toFixed(1)}h`,
-      badgeColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
-      color: 'text-emerald-500',
-    },
-    {
       id: 'files' as NavSection,
       label: 'File Drive',
       icon: FolderOpen,
@@ -107,26 +96,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       color: 'text-sky-500',
     },
     {
-      id: 'sharemarket' as NavSection,
-      label: 'Share Market',
-      icon: TrendingUp,
-      badge: null,
-      color: 'text-indigo-500',
-    },
-    {
       id: 'transactions' as NavSection,
       label: 'My Transactions',
-      icon: Receipt,
+      icon: Wallet,
       badge: null,
       color: 'text-emerald-500',
-    },
-    {
-      id: 'chat' as NavSection,
-      label: 'Workspace Chat',
-      icon: MessageSquare,
-      badge: 'Live',
-      badgeColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-bold',
-      color: 'text-indigo-500',
     },
     {
       id: 'trash' as NavSection,
@@ -320,7 +294,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span>Productivity Velocity</span>
           </div>
           <p className="mt-1 text-xs text-indigo-700/80 dark:text-indigo-300/80">
-            {stats.completedTasks} tasks done • {stats.hoursLoggedToday.toFixed(1)}h logged today
+            {stats.completedTasks} tasks completed • {stats.totalNotes} notes active
           </p>
           <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-indigo-200/60 dark:bg-indigo-900/60">
             <div
@@ -328,7 +302,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               style={{
                 width: `${Math.min(
                   100,
-                  ((stats.completedTasks + stats.hoursLoggedToday) / 10) * 100
+                  (stats.completedTasks / Math.max(1, stats.completedTasks + stats.pendingTasks)) * 100
                 )}%`,
               }}
             />

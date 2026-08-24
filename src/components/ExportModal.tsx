@@ -10,20 +10,15 @@ import {
   Printer,
   CheckCircle2,
   X,
-  Calendar,
-  Clock,
   CheckSquare,
   FileText,
   Layers,
-  Sparkles,
   Download
 } from 'lucide-react';
-import { Note, TodoTask, WorkLog, UserSession } from '../types';
+import { Note, TodoTask, UserSession } from '../types';
 import {
-  exportWorkLogsToCSV,
   exportTasksToCSV,
   exportNotesToCSV,
-  exportWorkLogsToPDF,
   exportTasksToPDF,
   exportFullReportToPDF,
 } from '../lib/exportUtils';
@@ -32,45 +27,38 @@ interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   tasks: TodoTask[];
-  worklogs: WorkLog[];
   notes: Note[];
   currentUser: UserSession | null;
-  initialType?: 'all' | 'tasks' | 'worklogs' | 'notes';
+  initialType?: 'all' | 'tasks' | 'notes';
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
   tasks,
-  worklogs,
   notes,
   currentUser,
   initialType = 'all',
 }) => {
-  const [selectedTarget, setSelectedTarget] = useState<'all' | 'worklogs' | 'tasks' | 'notes'>(initialType);
+  const [selectedTarget, setSelectedTarget] = useState<'all' | 'tasks' | 'notes'>(initialType);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const totalHours = worklogs.reduce((acc, curr) => acc + curr.hoursSpent, 0);
-
   const handleExportCSV = () => {
-    if (selectedTarget === 'worklogs') {
-      exportWorkLogsToCSV(worklogs);
-      setExportSuccess(`Exported ${worklogs.length} work logs to CSV`);
-    } else if (selectedTarget === 'tasks') {
+    if (selectedTarget === 'tasks') {
       exportTasksToCSV(tasks);
       setExportSuccess(`Exported ${tasks.length} tasks to CSV`);
     } else if (selectedTarget === 'notes') {
       exportNotesToCSV(notes);
       setExportSuccess(`Exported ${notes.length} notes to CSV`);
     } else {
-      // Export both worklogs and tasks
-      exportWorkLogsToCSV(worklogs);
+      // Export both notes and tasks
+      exportTasksToCSV(tasks);
       setTimeout(() => {
-        exportTasksToCSV(tasks);
+        exportNotesToCSV(notes);
       }, 300);
-      setExportSuccess(`Exported Work Logs & Tasks CSV files`);
+      setExportSuccess(`Exported Tasks & Notes CSV files`);
     }
 
     setTimeout(() => {
@@ -79,14 +67,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   };
 
   const handleExportPDF = () => {
-    if (selectedTarget === 'worklogs') {
-      exportWorkLogsToPDF(worklogs, currentUser);
-      setExportSuccess(`Generated printable PDF report for ${worklogs.length} work logs`);
-    } else if (selectedTarget === 'tasks') {
+    if (selectedTarget === 'tasks') {
       exportTasksToPDF(tasks, currentUser);
       setExportSuccess(`Generated printable PDF report for ${tasks.length} tasks`);
     } else {
-      exportFullReportToPDF(notes, tasks, worklogs, currentUser);
+      exportFullReportToPDF(notes, tasks, currentUser);
       setExportSuccess(`Generated executive workspace summary PDF`);
     }
 
@@ -142,23 +127,23 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Select Data to Export
           </label>
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
             <button
-              onClick={() => setSelectedTarget('worklogs')}
+              onClick={() => setSelectedTarget('notes')}
               className={`flex flex-col items-start rounded-2xl border p-3 text-left transition ${
-                selectedTarget === 'worklogs'
-                  ? 'border-emerald-500 bg-emerald-50/50 ring-2 ring-emerald-500/20 dark:border-emerald-500 dark:bg-emerald-950/30'
+                selectedTarget === 'notes'
+                  ? 'border-amber-500 bg-amber-50/50 ring-2 ring-amber-500/20 dark:border-amber-500 dark:bg-amber-950/30'
                   : 'border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600'
               }`}
             >
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                <Clock className="h-4 w-4" />
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                <FileText className="h-4 w-4" />
               </div>
               <span className="mt-2 text-xs font-bold text-slate-900 dark:text-white">
-                Work Logs
+                Notes
               </span>
               <span className="text-[10px] text-slate-400">
-                {worklogs.length} entries ({totalHours.toFixed(1)}h)
+                {notes.length} total notes
               </span>
             </button>
 
@@ -183,7 +168,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
             <button
               onClick={() => setSelectedTarget('all')}
-              className={`col-span-2 sm:col-span-1 flex flex-col items-start rounded-2xl border p-3 text-left transition ${
+              className={`flex flex-col items-start rounded-2xl border p-3 text-left transition ${
                 selectedTarget === 'all'
                   ? 'border-violet-500 bg-violet-50/50 ring-2 ring-violet-500/20 dark:border-violet-500 dark:bg-violet-950/30'
                   : 'border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600'
@@ -196,7 +181,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 All Workspace
               </span>
               <span className="text-[10px] text-slate-400">
-                Logs, Tasks & Notes
+                Tasks & Notes
               </span>
             </button>
           </div>

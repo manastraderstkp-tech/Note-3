@@ -1,12 +1,10 @@
 import React from 'react';
 import {
   FileText,
-  Clock,
+  FolderOpen,
   CheckCircle2,
   ListTodo,
   ArrowUpRight,
-  TrendingUp,
-  Activity
 } from 'lucide-react';
 import { MetricStats, NavSection } from '../types';
 
@@ -60,18 +58,18 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ stats, onNavigate }) =
       trend: '100% velocity',
     },
     {
-      id: 'metric-hours-today',
-      title: 'Hours Logged Today',
-      value: `${stats.hoursLoggedToday.toFixed(1)}`,
-      suffix: 'hrs',
-      icon: Clock,
-      color: 'from-violet-500 to-purple-500',
-      bgLight: 'bg-violet-50 dark:bg-violet-950/30',
-      textAccent: 'text-violet-600 dark:text-violet-400',
-      borderAccent: 'border-violet-200/70 dark:border-violet-900/40',
-      targetSection: 'worklogs' as NavSection,
-      subtext: `${stats.totalHoursWeek.toFixed(1)}h this week`,
-      trend: 'Active tracking',
+      id: 'metric-files-drive',
+      title: 'File Drive',
+      value: stats.totalFiles || 0,
+      suffix: 'files',
+      icon: FolderOpen,
+      color: 'from-sky-500 to-cyan-500',
+      bgLight: 'bg-sky-50 dark:bg-sky-950/30',
+      textAccent: 'text-sky-600 dark:text-sky-400',
+      borderAccent: 'border-sky-200/70 dark:border-sky-900/40',
+      targetSection: 'files' as NavSection,
+      subtext: 'Cloud & local storage',
+      trend: 'Protected files',
     },
   ];
 

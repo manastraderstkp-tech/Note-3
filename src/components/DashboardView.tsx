@@ -2,59 +2,44 @@ import React from 'react';
 import {
   FileText,
   ListTodo,
-  Clock,
+  FolderOpen,
   Plus,
   ArrowRight,
   CheckCircle2,
   Check,
-  Flame,
-  Calendar,
-  Sparkles,
-  Layers,
   ChevronRight,
   TrendingUp,
-  Tag,
   FileDown,
   Search,
-  X,
-  Receipt,
-  ArrowUpRight,
-  ArrowDownLeft
 } from 'lucide-react';
-import { Note, TodoTask, WorkLog, MetricStats, NavSection, TaskStatus } from '../types';
+import { Note, TodoTask, MetricStats, NavSection, TaskStatus } from '../types';
 import { MetricCards } from './MetricCards';
-import { WorkHoursChart } from './WorkHoursChart';
 import { getNotePreviewText, stripHtmlToText } from '../lib/textUtils';
 
 interface DashboardViewProps {
   stats: MetricStats;
   notes: Note[];
   tasks: TodoTask[];
-  worklogs: WorkLog[];
   onNavigate: (section: NavSection) => void;
-  onOpenNewModal: (type: 'note' | 'todo' | 'worklog') => void;
+  onOpenNewModal: (type: 'note' | 'todo') => void;
   onToggleTaskStatus: (id: string, newStatus: TaskStatus) => void;
   onEditNote: (note: Note) => void;
   onEditTask: (task: TodoTask) => void;
-  onEditWorkLog?: (log: WorkLog) => void;
   searchQuery?: string;
   isDark?: boolean;
-  onOpenExportModal?: (initialType?: 'all' | 'tasks' | 'worklogs' | 'notes') => void;
+  onOpenExportModal?: (initialType?: 'all' | 'tasks' | 'notes') => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   stats,
   notes,
   tasks,
-  worklogs,
   onNavigate,
   onOpenNewModal,
   onToggleTaskStatus,
   onEditNote,
   onEditTask,
-  onEditWorkLog,
   searchQuery = '',
-  isDark = false,
   onOpenExportModal,
 }) => {
   const query = searchQuery.trim().toLowerCase();
@@ -81,24 +66,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       )
     : notes;
 
-  // Apply real-time search filter to worklogs
-  const filteredWorkLogs = query
-    ? worklogs.filter(
-        (l) =>
-          l.projectName.toLowerCase().includes(query) ||
-          l.taskDescription.toLowerCase().includes(query) ||
-          l.category.toLowerCase().includes(query)
-      )
-    : worklogs;
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayLogs = filteredWorkLogs.filter((l) => l.date === todayStr);
-
   const pendingAndInProgress = filteredTasks.filter((t) => t.status !== 'completed');
 
   const recentNotes = [...filteredNotes]
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    .slice(0, 3);
+    .slice(0, 4);
+
+  const completedCount = tasks.filter((t) => t.status === 'completed').length;
+  const completionRate = tasks.length > 0 ? Math.round((completedCount / tasks.length) * 100) : 0;
 
   return (
     <div className="space-y-8">
@@ -110,8 +85,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span>
               Real-time Global Filter active for "<strong>{searchQuery}</strong>": found{' '}
               <strong>{filteredNotes.length}</strong> note{filteredNotes.length === 1 ? '' : 's'},{' '}
-              <strong>{filteredTasks.length}</strong> task{filteredTasks.length === 1 ? '' : 's'},{' '}
-              <strong>{filteredWorkLogs.length}</strong> work log{filteredWorkLogs.length === 1 ? '' : 's'}.
+              <strong>{filteredTasks.length}</strong> task{filteredTasks.length === 1 ? '' : 's'}.
             </span>
           </div>
           <span className="rounded-lg bg-indigo-200/60 px-2 py-0.5 text-[10px] font-bold dark:bg-indigo-900">
@@ -130,10 +104,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-xs text-indigo-200">Productivity Executive Hub</span>
           </div>
           <h2 className="text-2xl font-black tracking-tight sm:text-3xl">
-            Productivity & Activity Hub
+            Productivity & Workspace Hub
           </h2>
           <p className="max-w-xl text-xs text-indigo-100/80 sm:text-sm">
-            Manage your documentation, track active sprint tasks, and log daily project hours seamlessly.
+            Manage your documentation, organize notes, and track active sprint tasks seamlessly.
           </p>
         </div>
 
@@ -160,18 +134,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <button
             onClick={() => onOpenNewModal('todo')}
-            className="flex items-center gap-1.5 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white backdrop-blur-md transition hover:bg-white/20 active:scale-95 sm:text-sm"
+            className="flex items-center gap-1.5 rounded-xl bg-indigo-500 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-indigo-600/30 transition hover:bg-indigo-600 active:scale-95 sm:text-sm"
           >
-            <ListTodo className="h-4 w-4 text-indigo-300" />
+            <ListTodo className="h-4 w-4" />
             <span>+ Task</span>
-          </button>
-
-          <button
-            onClick={() => onOpenNewModal('worklog')}
-            className="flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-emerald-600/30 transition hover:bg-emerald-600 active:scale-95 sm:text-sm"
-          >
-            <Clock className="h-4 w-4" />
-            <span>+ Log Time</span>
           </button>
         </div>
       </div>
@@ -187,14 +153,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <MetricCards stats={stats} onNavigate={onNavigate} />
       </section>
 
-      {/* Analytics Visuals: Chart.js 7-Day Work Hours Breakdown */}
-      <section className="space-y-3">
-        <WorkHoursChart worklogs={worklogs} isDark={isDark} />
-      </section>
-
       {/* Two Column Content Grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left Column: Tasks & Recent Notes (7 cols) */}
+        {/* Left Column: Tasks (7 cols) */}
         <div className="space-y-6 lg:col-span-7">
           {/* Active / High Priority Tasks */}
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
@@ -223,7 +184,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <div className="mt-4 space-y-2.5">
-              {pendingAndInProgress.slice(0, 4).map((task) => (
+              {pendingAndInProgress.slice(0, 5).map((task) => (
                 <div
                   key={task.id}
                   className="group flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/70 p-3 transition hover:border-slate-200 hover:bg-white dark:border-slate-800/80 dark:bg-slate-800/40 dark:hover:border-slate-700 dark:hover:bg-slate-800"
@@ -275,191 +236,112 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               )}
             </div>
           </div>
-
-          {/* Recent Notes Preview */}
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
-                  <FileText className="h-4 w-4" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                    Recent Notes
-                  </h4>
-                  <p className="text-xs text-slate-400">Latest specs & documents</p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => onNavigate('notes')}
-                className="flex items-center gap-1 text-xs font-semibold text-amber-600 hover:text-amber-700 dark:text-amber-400"
-              >
-                <span>All Notes</span>
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {recentNotes.map((note) => (
-                <div
-                  key={note.id}
-                  onClick={() => onEditNote(note)}
-                  className="group flex cursor-pointer flex-col justify-between rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3.5 transition hover:-translate-y-0.5 hover:border-amber-400/50 hover:bg-amber-50/20 hover:shadow-xs dark:border-slate-800 dark:bg-slate-800/40 dark:hover:border-amber-500/30"
-                >
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      {note.category}
-                    </span>
-                    <h5 className="mt-1 line-clamp-2 text-xs font-bold text-slate-900 group-hover:text-amber-600 dark:text-white dark:group-hover:text-amber-400">
-                      {note.title}
-                    </h5>
-                    <p className="mt-1.5 line-clamp-3 text-[11px] text-slate-500 dark:text-slate-400">
-                      {getNotePreviewText(note.content, 140)}
-                    </p>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between text-[10px] text-slate-400">
-                    <span>{note.tags[0] ? `#${note.tags[0]}` : ''}</span>
-                    <ArrowRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
 
-        {/* Right Column: Work Log Timeline & Analytics (5 cols) */}
+        {/* Right Column: Quick Status & Recent Notes (5 cols) */}
         <div className="space-y-6 lg:col-span-5">
-          {/* Today's Logged Hours Timeline */}
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-                  <Clock className="h-4 w-4" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                    Today's Work Logs
-                  </h4>
-                  <p className="text-xs text-slate-400">
-                    {stats.hoursLoggedToday.toFixed(1)} hrs tracked today
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => onNavigate('worklogs')}
-                className="flex items-center gap-1 text-xs font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
-              >
-                <span>Full log</span>
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {todayLogs.map((log) => (
-                <div
-                  key={log.id}
-                  onClick={() => onEditWorkLog && onEditWorkLog(log)}
-                  className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/50 p-3 transition hover:bg-slate-100/60 dark:border-slate-800/70 dark:bg-slate-800/30 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-xs font-black text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
-                    {log.hoursSpent}h
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-slate-900 dark:text-white">
-                      {log.projectName}
-                    </p>
-                    <p className="mt-0.5 line-clamp-2 text-[11px] text-slate-500 dark:text-slate-400">
-                      {log.taskDescription}
-                    </p>
-                  </div>
-                </div>
-              ))}
-
-              {todayLogs.length === 0 && (
-                <div className="py-8 text-center text-xs text-slate-400">
-                  <Clock className="mx-auto mb-2 h-6 w-6 text-slate-300 dark:text-slate-700" />
-                  No time logged yet today.
-                </div>
-              )}
-
-              <button
-                onClick={() => onOpenNewModal('worklog')}
-                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-emerald-300 py-2.5 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/20"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Add Time Entry</span>
-              </button>
-            </div>
-          </div>
-
-          {/* My Transactions & Accounting Quick Card */}
-          <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-emerald-50/50 via-white to-slate-50 p-6 shadow-xs dark:border-slate-800 dark:from-emerald-950/20 dark:via-slate-900 dark:to-slate-900">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                  <Receipt className="h-4 w-4" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                    My Transactions
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Receipts, payments & daily expenses</p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => onNavigate('transactions')}
-                className="flex items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 transition"
-              >
-                <span>Open Daybook</span>
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <div className="mt-4 flex items-center gap-2">
-              <button
-                onClick={() => onNavigate('transactions')}
-                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-rose-50 border border-rose-200/60 py-2 px-3 text-[11px] font-bold text-rose-700 hover:bg-rose-100/70 transition dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300"
-              >
-                <ArrowUpRight className="h-3.5 w-3.5" />
-                <span>Daily Expenses</span>
-              </button>
-              <button
-                onClick={() => onNavigate('transactions')}
-                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-50 border border-emerald-200/60 py-2 px-3 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100/70 transition dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300"
-              >
-                <ArrowDownLeft className="h-3.5 w-3.5" />
-                <span>Income / Receipts</span>
-              </button>
-            </div>
-          </div>
-
           {/* Quick Summary Card */}
           <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-50 to-indigo-50/40 p-6 dark:border-slate-800 dark:from-slate-900 dark:to-indigo-950/20">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Weekly Summary
+              Task Velocity & Completion
             </h4>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div className="rounded-2xl border border-slate-200/70 bg-white p-3 dark:border-slate-800 dark:bg-slate-800/80">
-                <span className="text-[11px] text-slate-400">Week Total</span>
-                <p className="mt-1 text-xl font-extrabold text-slate-900 dark:text-white">
-                  {stats.totalHoursWeek.toFixed(1)} <span className="text-xs font-normal">hrs</span>
+                <span className="text-[11px] text-slate-400">Completed</span>
+                <p className="mt-1 text-xl font-extrabold text-emerald-600 dark:text-emerald-400">
+                  {completedCount} <span className="text-xs font-normal text-slate-400">tasks</span>
                 </p>
               </div>
               <div className="rounded-2xl border border-slate-200/70 bg-white p-3 dark:border-slate-800 dark:bg-slate-800/80">
                 <span className="text-[11px] text-slate-400">Completion Rate</span>
-                <p className="mt-1 text-xl font-extrabold text-emerald-600 dark:text-emerald-400">
-                  {tasks.length > 0
-                    ? Math.round((stats.completedTasks / tasks.length) * 100)
-                    : 0}
-                  %
+                <p className="mt-1 text-xl font-extrabold text-indigo-600 dark:text-indigo-400">
+                  {completionRate}%
                 </p>
               </div>
             </div>
           </div>
+
+          {/* Quick Links / File Drive Launcher */}
+          <div
+            onClick={() => onNavigate('files')}
+            className="group cursor-pointer rounded-3xl border border-slate-200 bg-white p-5 transition hover:border-sky-400/50 hover:shadow-xs dark:border-slate-800 dark:bg-slate-900"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-50 text-sky-600 dark:bg-sky-950/60 dark:text-sky-400">
+                  <FolderOpen className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">
+                    File Drive
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    {stats.totalFiles || 0} files stored in cloud drive
+                  </p>
+                </div>
+              </div>
+              <ChevronRight className="h-4 w-4 text-slate-400 group-hover:translate-x-0.5 group-hover:text-sky-500 transition" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent Notes Full Width Grid */}
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
+              <FileText className="h-4 w-4" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                Recent Notes & Documents
+              </h4>
+              <p className="text-xs text-slate-400">Latest workspace knowledge and records</p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onNavigate('notes')}
+            className="flex items-center gap-1 text-xs font-semibold text-amber-600 hover:text-amber-700 dark:text-amber-400"
+          >
+            <span>All Notes ({notes.length})</span>
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {recentNotes.map((note) => (
+            <div
+              key={note.id}
+              onClick={() => onEditNote(note)}
+              className="group flex cursor-pointer flex-col justify-between rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3.5 transition hover:-translate-y-0.5 hover:border-amber-400/50 hover:bg-amber-50/20 hover:shadow-xs dark:border-slate-800 dark:bg-slate-800/40 dark:hover:border-amber-500/30"
+            >
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {note.category}
+                </span>
+                <h5 className="mt-1 line-clamp-2 text-xs font-bold text-slate-900 group-hover:text-amber-600 dark:text-white dark:group-hover:text-amber-400">
+                  {note.title}
+                </h5>
+                <p className="mt-1.5 line-clamp-3 text-[11px] text-slate-500 dark:text-slate-400">
+                  {getNotePreviewText(note.content, 140)}
+                </p>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between text-[10px] text-slate-400">
+                <span>{note.tags[0] ? `#${note.tags[0]}` : ''}</span>
+                <ArrowRight className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
+              </div>
+            </div>
+          ))}
+
+          {recentNotes.length === 0 && (
+            <div className="col-span-full py-8 text-center text-xs text-slate-400">
+              <FileText className="mx-auto mb-2 h-6 w-6 text-slate-300 dark:text-slate-700" />
+              No notes created yet. Click "+ Note" to create your first document.
+            </div>
+          )}
         </div>
       </div>
     </div>

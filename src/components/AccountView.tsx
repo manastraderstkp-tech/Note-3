@@ -443,10 +443,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
             <div className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-800/60">
               <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-xs font-semibold">
                 <Clock className="h-3.5 w-3.5 text-emerald-500" />
-                <span>Hours Logged</span>
+                <span>Pending Tasks</span>
               </div>
               <p className="mt-1 text-lg font-black text-slate-900 dark:text-white">
-                {stats.totalHoursWeek.toFixed(1)}h
+                {stats.pendingTasks + stats.inProgressTasks}
               </p>
             </div>
 
@@ -692,7 +692,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
               <h3 className="text-base font-bold">Danger Zone: Delete Account</h3>
             </div>
             <p className="mt-1 text-xs text-rose-600/80 dark:text-rose-300/70 max-w-xl">
-              Permanently delete your profile and wipe all associated notes, tasks, work logs, files, folders, and market portfolio records. This action cannot be undone.
+              Permanently delete your profile and wipe all associated notes, tasks, files, and folder records. This action cannot be undone.
             </p>
           </div>
 
@@ -884,7 +884,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 mb-4">
-              All your records ({stats.totalNotes} notes, {stats.completedTasks + stats.pendingTasks + stats.inProgressTasks} tasks, work logs, files, and portfolio) associated with <span className="font-bold">{currentUser.email}</span> will be permanently erased.
+              All your records ({stats.totalNotes} notes, {stats.completedTasks + stats.pendingTasks + stats.inProgressTasks} tasks, files, and folders) associated with <span className="font-bold">{currentUser.email}</span> will be permanently erased.
             </p>
 
             <div className="mb-4 space-y-2">

@@ -1,1007 +1,387 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
+  DollarSign,
+  Plus,
   ArrowDownLeft,
   ArrowUpRight,
-  ArrowLeftRight,
-  Plus,
+  RefreshCw,
   Search,
+  Filter,
   Calendar,
   Download,
-  Printer,
   Trash2,
   Edit3,
-  Receipt,
+  TrendingUp,
+  TrendingDown,
   Wallet,
-  Building,
-  Smartphone,
-  ChevronDown,
-  Clock,
-  Layers,
-  Sparkles,
-  RefreshCw
+  ShieldCheck,
+  CheckCircle,
 } from 'lucide-react';
-import { Transaction, TransactionType, PaymentMethod, AccountingSummary } from '../types';
-import {
-  fetchUserTransactions,
-  saveUserTransaction,
-  deleteUserTransaction,
-  clearAllUserTransactions,
-  calculateAccountingSummary,
-  formatCurrencyNPR,
-  EXPENSE_CATEGORIES,
-  INCOME_CATEGORIES,
-  PAYMENT_METHODS
-} from '../lib/transactionDb';
-import { getSupabase } from '../lib/supabase';
-import { TransactionModal } from './TransactionModal';
-import { TransactionVoucherModal } from './TransactionVoucherModal';
-import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { UserTransaction, TransactionType } from '../types';
 
 interface TransactionsViewProps {
-  userId: string;
-  onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
-  searchQuery?: string;
+  transactions: UserTransaction[];
+  onOpenModal: (type?: TransactionType, tx?: UserTransaction) => void;
+  onDeleteTransaction: (id: string) => void;
+  syncStatusText: string;
 }
 
-type TabType = 'all' | 'payments' | 'receipts' | 'transfers' | 'daybook';
-type DateFilterType = 'all' | 'today' | 'yesterday' | 'this_month' | 'last_month';
-
 export const TransactionsView: React.FC<TransactionsViewProps> = ({
-  userId,
-  onShowToast,
-  searchQuery = '',
+  transactions,
+  onOpenModal,
+  onDeleteTransaction,
+  syncStatusText,
 }) => {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabType>('all');
-  
-  // Filters
-  const [localSearch, setLocalSearch] = useState('');
-  const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'RECEIPT' | 'PAYMENT' | 'TRANSFER'>('ALL');
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'this_month'>('all');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
 
-  // Modals
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalDefaultType, setModalDefaultType] = useState<TransactionType>('payment');
-  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
-  const [voucherTx, setVoucherTx] = useState<Transaction | null>(null);
-  const [deletingTx, setDeletingTx] = useState<Transaction | null>(null);
-  const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
-
-  // Load Transactions directly from Supabase
-  const loadData = useCallback(async (isManualRefresh = false, isSilent = false) => {
-    if (isManualRefresh) setRefreshing(true);
-    else if (!isSilent) setLoading(true);
-
-    try {
-      const data = await fetchUserTransactions(userId);
-      setTransactions(data);
-    } catch (e: any) {
-      console.error('[TransactionsView] Error loading transactions from Supabase:', e);
-      if (!isSilent) {
-        onShowToast(e?.message || 'Failed to load transaction records from Supabase.', 'error');
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [userId, onShowToast]);
-
-  useEffect(() => {
-    let isMounted = true;
-    const supabaseClient = getSupabase();
-
-    // 1. Initial Fetch on mount
-    loadData(false, false);
-
-    // 2. Listen to Auth State Changes
-    let authSubscription: { unsubscribe: () => void } | null = null;
-    if (supabaseClient?.auth) {
-      const { data: authListener } = supabaseClient.auth.onAuthStateChange((event, session) => {
-        if (!isMounted) return;
-        console.log('[TransactionsView] onAuthStateChange event:', event, 'User ID:', session?.user?.id);
-        loadData(false, true);
-      });
-      authSubscription = authListener?.subscription || null;
-    }
-
-    // 3. Supabase Realtime Subscription listening to INSERT, UPDATE, and DELETE changes
-    let channel: any = null;
-    if (supabaseClient) {
-      channel = supabaseClient
-        .channel('public:user_transactions')
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'user_transactions' },
-          (payload) => {
-            console.log('[Realtime] Transaction inserted:', payload);
-            if (isMounted) loadData(false, true);
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'user_transactions' },
-          (payload) => {
-            console.log('[Realtime] Transaction updated:', payload);
-            if (isMounted) loadData(false, true);
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'DELETE', schema: 'public', table: 'user_transactions' },
-          (payload) => {
-            console.log('[Realtime] Transaction deleted:', payload);
-            if (isMounted) loadData(false, true);
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            console.log('[Supabase Realtime] Subscribed to public:user_transactions');
-          }
-        });
-    }
-
-    // 4. Reload on window focus & document visibility change
-    const handleFocus = () => {
-      if (isMounted) loadData(false, true);
-    };
-
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
-
-    // 5. Periodic polling (every 6 seconds) to ensure multi-tab / multi-browser consistency
-    const pollInterval = setInterval(() => {
-      if (isMounted) loadData(false, true);
-    }, 6000);
-
-    // Cleanup function
-    return () => {
-      isMounted = false;
-      if (authSubscription) {
-        authSubscription.unsubscribe();
-      }
-      if (channel && supabaseClient) {
-        supabaseClient.removeChannel(channel);
-      }
-      clearInterval(pollInterval);
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
-    };
-  }, [userId, loadData]);
-
-  // Sync external search query from header
-  useEffect(() => {
-    if (searchQuery) {
-      setLocalSearch(searchQuery);
-    }
-  }, [searchQuery]);
-
-  // Compute Accounting Summary
-  const summary: AccountingSummary = useMemo(() => {
-    return calculateAccountingSummary(transactions);
-  }, [transactions]);
-
-  // Unique Available Categories
-  const availableCategories = useMemo(() => {
+  // Available categories for filter dropdown
+  const allCategories = useMemo(() => {
     const set = new Set<string>();
-    transactions.forEach((tx) => {
-      if (tx.category && tx.category.trim()) {
-        set.add(tx.category.trim());
-      }
+    transactions.forEach((t) => {
+      if (t.category) set.add(t.category);
     });
     return Array.from(set).sort();
   }, [transactions]);
 
-  // Filtered Transactions
+  // Filtered transactions
   const filteredTransactions = useMemo(() => {
-    const todayObj = new Date();
-    const todayStr = todayObj.toISOString().split('T')[0];
-    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-    const thisMonthPrefix = todayStr.slice(0, 7);
-
-    // Calculate last month YYYY-MM prefix
-    const lastMonthObj = new Date(todayObj.getFullYear(), todayObj.getMonth() - 1, 1);
-    const lastMonthPrefix = `${lastMonthObj.getFullYear()}-${String(lastMonthObj.getMonth() + 1).padStart(2, '0')}`;
-
     return transactions.filter((tx) => {
-      // Tab filter
-      if (activeTab === 'payments' && tx.type !== 'payment') return false;
-      if (activeTab === 'receipts' && tx.type !== 'receipt') return false;
-      if (activeTab === 'transfers' && tx.type !== 'transfer') return false;
+      // Type filter
+      if (typeFilter !== 'ALL' && tx.type !== typeFilter) return false;
 
       // Category filter
-      if (selectedCategory !== 'all' && tx.category !== selectedCategory) return false;
+      if (selectedCategoryFilter !== 'ALL' && tx.category !== selectedCategoryFilter) return false;
+
+      // Search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesDesc = tx.description?.toLowerCase().includes(q) || false;
+        const matchesCat = tx.category.toLowerCase().includes(q);
+        const matchesPm = tx.paymentMethod?.toLowerCase().includes(q) || false;
+        const matchesAmount = tx.amount.toString().includes(q);
+        if (!matchesDesc && !matchesCat && !matchesPm && !matchesAmount) return false;
+      }
 
       // Date filter
-      if (dateFilter === 'today' && tx.date !== todayStr) return false;
-      if (dateFilter === 'yesterday' && tx.date !== yesterday) return false;
-      if ((dateFilter === 'this_month' || (dateFilter as string) === 'month') && !tx.date.startsWith(thisMonthPrefix)) return false;
-      if (dateFilter === 'last_month' && !tx.date.startsWith(lastMonthPrefix)) return false;
-
-      // Search filter
-      const query = localSearch.toLowerCase().trim();
-      if (query) {
-        const matchTitle = (tx.description || '').toLowerCase().includes(query);
-        const matchParty = (tx.partyName || '').toLowerCase().includes(query);
-        const matchVoucher = (tx.voucherNo || '').toLowerCase().includes(query);
-        const matchCat = (tx.category || '').toLowerCase().includes(query);
-        const matchAmount = String(tx.amount).includes(query);
-        if (!matchTitle && !matchParty && !matchVoucher && !matchCat && !matchAmount) {
-          return false;
-        }
+      if (dateFilter === 'today') {
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (tx.transactionDate !== todayStr) return false;
+      } else if (dateFilter === 'this_month') {
+        const now = new Date();
+        const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        if (!tx.transactionDate.startsWith(currentYearMonth)) return false;
       }
 
       return true;
-    }).sort((a, b) => {
-      return b.date !== a.date ? b.date.localeCompare(a.date) : (b.createdAt || '').localeCompare(a.createdAt || '');
     });
-  }, [transactions, activeTab, dateFilter, selectedCategory, localSearch]);
+  }, [transactions, typeFilter, selectedCategoryFilter, searchQuery, dateFilter]);
 
-  // Daybook Grouping
-  const daybookGroups = useMemo(() => {
-    const map = new Map<string, Transaction[]>();
-    filteredTransactions.forEach((tx) => {
-      const list = map.get(tx.date) || [];
-      list.push(tx);
-      map.set(tx.date, list);
+  // Summary calculations
+  const { totalIncome, totalExpense, netBalance } = useMemo(() => {
+    let inc = 0;
+    let exp = 0;
+    transactions.forEach((tx) => {
+      if (tx.type === 'RECEIPT') inc += tx.amount;
+      else if (tx.type === 'PAYMENT') exp += tx.amount;
     });
+    return {
+      totalIncome: inc,
+      totalExpense: exp,
+      netBalance: inc - exp,
+    };
+  }, [transactions]);
 
-    const groups: { date: string; items: Transaction[]; totalReceipt: number; totalPayment: number; net: number }[] = [];
-    map.forEach((items, date) => {
-      let r = 0;
-      let p = 0;
-      items.forEach((item) => {
-        if (item.type === 'receipt') r += item.amount;
-        if (item.type === 'payment') p += item.amount;
-      });
-      groups.push({
-        date,
-        items,
-        totalReceipt: r,
-        totalPayment: p,
-        net: r - p,
-      });
-    });
-
-    return groups.sort((a, b) => b.date.localeCompare(a.date));
-  }, [filteredTransactions]);
-
-  // Handlers
-  const handleOpenAddModal = (defaultTxType: TransactionType = 'payment') => {
-    setEditingTransaction(null);
-    setModalDefaultType(defaultTxType);
-    setIsModalOpen(true);
-  };
-
-  const handleEdit = (tx: Transaction) => {
-    setEditingTransaction(tx);
-    setModalDefaultType(tx.type);
-    setIsModalOpen(true);
-  };
-
-  const handleSaveTransaction = async (
-    txData: Omit<Transaction, 'id' | 'createdAt' | 'userId'>,
-    id?: string
-  ) => {
-    try {
-      const res = await saveUserTransaction(userId, txData, id);
-      if (res.success) {
-        if (res.error) {
-          onShowToast(`Transaction saved. Notice: ${res.error}`, 'info');
-        } else {
-          onShowToast(id ? 'Transaction updated in Supabase.' : 'Transaction recorded & synced with Supabase.', 'success');
-        }
-        await loadData(false, true);
-        return { success: true };
-      } else {
-        const errorMsg = res.error || 'Failed to save transaction to database.';
-        onShowToast(errorMsg, 'error');
-        return { success: false, error: errorMsg };
-      }
-    } catch (err: any) {
-      console.error('[TransactionsView] Save transaction exception:', err);
-      const errorMsg = err?.message || 'Error occurred while saving transaction.';
-      onShowToast(errorMsg, 'error');
-      return { success: false, error: errorMsg };
-    }
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!deletingTx) return;
-    try {
-      const res = await deleteUserTransaction(userId, deletingTx.id);
-      if (res.success) {
-        onShowToast('Transaction deleted from Supabase.', 'info');
-        setDeletingTx(null);
-        await loadData(false, true);
-      } else {
-        onShowToast(res.error || 'Failed to delete transaction from Supabase.', 'error');
-      }
-    } catch (err: any) {
-      console.error('[TransactionsView] Delete transaction exception:', err);
-      onShowToast(err?.message || 'Error occurred while deleting transaction.', 'error');
-    }
-  };
-
-  const handleClearAllConfirm = async () => {
-    try {
-      const res = await clearAllUserTransactions(userId);
-      if (res.success) {
-        onShowToast('All transactions cleared. Balance reset to Rs. 0', 'info');
-        setIsClearAllModalOpen(false);
-        await loadData(false, true);
-      } else {
-        onShowToast(res.error || 'Failed to clear transactions from Supabase.', 'error');
-      }
-    } catch (err: any) {
-      console.error('[TransactionsView] Clear transactions exception:', err);
-      onShowToast(err?.message || 'Error occurred while clearing transactions.', 'error');
-    }
-  };
-
-  // Export to CSV
+  // Export CSV
   const handleExportCSV = () => {
     if (filteredTransactions.length === 0) {
-      onShowToast('No transactions to export.', 'info');
+      alert('No transactions to export.');
       return;
     }
 
-    const headers = ['Voucher No', 'Date', 'Type', 'Category', 'Description/Party', 'Payment Method', 'Amount (NPR)'];
+    const headers = ['ID', 'Date', 'Type', 'Category', 'Amount (Rs.)', 'Payment Method', 'Description'];
     const rows = filteredTransactions.map((tx) => [
-      `"${tx.voucherNo || ''}"`,
-      `"${tx.date}"`,
-      `"${tx.type.toUpperCase()}"`,
-      `"${tx.category}"`,
-      `"${tx.description || tx.partyName || ''}"`,
-      `"${tx.paymentMethod}"`,
+      tx.id,
+      tx.transactionDate,
+      tx.type,
+      `"${(tx.category || '').replace(/"/g, '""')}"`,
       tx.amount,
+      `"${(tx.paymentMethod || '').replace(/"/g, '""')}"`,
+      `"${(tx.description || '').replace(/"/g, '""')}"`,
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Transactions_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `transactions_export_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    onShowToast('CSV exported successfully.', 'success');
   };
 
   return (
-    <div className="space-y-5 pb-12">
-      {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-4 dark:border-slate-800">
+    <div className="space-y-6 pb-12 animate-fadeIn">
+      {/* Top Banner & Title */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
         <div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500 text-white shadow-xs">
-              <Receipt className="h-4 w-4" />
-            </div>
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-              My Transactions (मेरो हिसाब-किताब)
-            </h1>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Accounting Ledger
+            </span>
+            <span className="text-xs text-slate-400 dark:text-slate-500">• {syncStatusText}</span>
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            दैनिक खर्च, आम्दानी र खाता ट्रान्सफर सरल व्यवस्थापन
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+            My Transactions
+          </h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Track income receipts, payments, and account transfers in real-time.
           </p>
         </div>
 
-        {/* 3 Main Action Buttons */}
-        <div className="flex items-center flex-wrap gap-2">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
-            onClick={() => handleOpenAddModal('payment')}
-            className="flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95"
+            onClick={() => onOpenModal('RECEIPT')}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold shadow-sm transition-all"
           >
-            <ArrowUpRight className="h-3.5 w-3.5" />
-            <span>+ Record Expense (खर्च)</span>
+            <Plus className="h-4 w-4" />
+            + Add Income
           </button>
-
           <button
-            onClick={() => handleOpenAddModal('receipt')}
-            className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95"
+            onClick={() => onOpenModal('PAYMENT')}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm transition-all"
           >
-            <ArrowDownLeft className="h-3.5 w-3.5" />
-            <span>+ Record Receipt (आम्दानी)</span>
+            <Plus className="h-4 w-4" />
+            - Add Expense
           </button>
-
-          <button
-            onClick={() => handleOpenAddModal('transfer')}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-          >
-            <ArrowLeftRight className="h-3.5 w-3.5 text-indigo-500" />
-            <span>Transfer (सार्नुहोस्)</span>
-          </button>
-
-          <button
-            onClick={() => loadData(true)}
-            disabled={refreshing || loading}
-            className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-            title="Reload latest records from Supabase"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-emerald-500' : ''}`} />
-            <span className="hidden md:inline">Sync</span>
-          </button>
-
           <button
             onClick={handleExportCSV}
-            className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-            title="Export CSV"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-semibold transition-all"
           >
-            <Download className="h-3.5 w-3.5" />
-            <span className="hidden md:inline">CSV</span>
+            <Download className="h-4 w-4" />
+            Export CSV
           </button>
-
-          {transactions.length > 0 && (
-            <button
-              onClick={() => setIsClearAllModalOpen(true)}
-              className="flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100 transition dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300"
-              title="Delete all transactions & reset balance to 0"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Clear</span>
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Concise KPI Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-        {/* Total Income / Receipts */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Total Income (कुल आम्दानी)
-            </span>
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-              <ArrowDownLeft className="h-3.5 w-3.5" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <h3 className="text-2xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">
-              {formatCurrencyNPR(summary.totalReceipts)}
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+        {/* Total Income */}
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+              Total Income (Receipts)
+            </p>
+            <h3 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+              Rs. {totalIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
-            <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-              <span>यस महिना (This Month):</span>
-              <span className="font-bold text-emerald-600 dark:text-emerald-400">{formatCurrencyNPR(summary.thisMonthReceipts)}</span>
-            </div>
+          </div>
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
+            <TrendingDown className="h-6 w-6 rotate-180" />
           </div>
         </div>
 
-        {/* Total Expenses / Payments */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Total Expenses (कुल खर्च)
-            </span>
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
-              <ArrowUpRight className="h-3.5 w-3.5" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <h3 className="text-2xl font-black tracking-tight text-rose-600 dark:text-rose-400">
-              {formatCurrencyNPR(summary.totalPayments)}
+        {/* Total Expenses */}
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+              Total Expenses (Payments)
+            </p>
+            <h3 className="text-2xl font-bold text-rose-600 dark:text-rose-400">
+              Rs. {totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
-            <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-              <span>यस महिना (This Month):</span>
-              <span className="font-bold text-rose-600 dark:text-rose-400">{formatCurrencyNPR(summary.thisMonthPayments)}</span>
-            </div>
+          </div>
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+            <TrendingUp className="h-6 w-6" />
           </div>
         </div>
 
         {/* Net Balance */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Net Balance (खुद बचत)
-            </span>
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
-              <Wallet className="h-3.5 w-3.5" />
-            </div>
-          </div>
-          <div className="mt-2">
-            <h3
-              className={`text-2xl font-black tracking-tight ${
-                summary.netBalance >= 0
-                  ? 'text-indigo-600 dark:text-indigo-400'
-                  : 'text-rose-600 dark:text-rose-400'
-              }`}
-            >
-              {formatCurrencyNPR(summary.netBalance)}
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+              Net Balance
+            </p>
+            <h3 className={`text-2xl font-bold ${netBalance >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400'}`}>
+              Rs. {netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              कुल {summary.transactionCount} कारोबार रेकर्डहरू
-            </p>
+          </div>
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400">
+            <Wallet className="h-6 w-6" />
           </div>
         </div>
       </div>
 
-      {/* Monthly Summary Progress Comparison Card */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
-              <Sparkles className="h-3.5 w-3.5" />
-            </div>
-            <span className="text-xs font-bold text-slate-900 dark:text-white">
-              Monthly Summary Comparison (यस महिनाको आम्दानी vs खर्च तुलना)
-            </span>
-          </div>
-          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-            बचत: <span className={summary.thisMonthReceipts - summary.thisMonthPayments >= 0 ? 'text-emerald-600 font-bold dark:text-emerald-400' : 'text-rose-600 font-bold dark:text-rose-400'}>
-              {formatCurrencyNPR(summary.thisMonthReceipts - summary.thisMonthPayments)}
-            </span>
-          </span>
-        </div>
-
-        {/* Visual Progress Bar */}
-        {(() => {
-          const maxVal = Math.max(summary.thisMonthReceipts, summary.thisMonthPayments, 1);
-          const incPct = Math.round((summary.thisMonthReceipts / maxVal) * 100);
-          const expPct = Math.round((summary.thisMonthPayments / maxVal) * 100);
-          return (
-            <div className="space-y-2 mt-3">
-              {/* Income Progress */}
-              <div>
-                <div className="flex items-center justify-between text-[11px] font-medium mb-1">
-                  <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
-                    <ArrowDownLeft className="h-3 w-3" /> Income (आम्दानी): {formatCurrencyNPR(summary.thisMonthReceipts)}
-                  </span>
-                  <span className="text-slate-400">{incPct}%</span>
-                </div>
-                <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-emerald-500 transition-all duration-500"
-                    style={{ width: `${incPct}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Expense Progress */}
-              <div>
-                <div className="flex items-center justify-between text-[11px] font-medium mb-1">
-                  <span className="text-rose-600 dark:text-rose-400 font-bold flex items-center gap-1">
-                    <ArrowUpRight className="h-3 w-3" /> Expenses (खर्च): {formatCurrencyNPR(summary.thisMonthPayments)}
-                  </span>
-                  <span className="text-slate-400">{expPct}%</span>
-                </div>
-                <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-rose-500 transition-all duration-500"
-                    style={{ width: `${expPct}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-      </div>
-
-      {/* Account Balances Inline Bar */}
-      <div className="flex items-center justify-between flex-wrap gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-2.5 px-4 text-xs dark:border-slate-800 dark:bg-slate-900/40">
-        <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 font-semibold">
-          <Wallet className="h-3.5 w-3.5 text-slate-400" />
-          <span>खाता मौज्दात:</span>
-        </div>
-
-        <div className="flex items-center flex-wrap gap-4 text-xs">
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500 dark:text-slate-400">नगद (Cash):</span>
-            <span className="font-bold text-slate-900 dark:text-white">{formatCurrencyNPR(summary.cashBalance)}</span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500 dark:text-slate-400">बैंक (Bank):</span>
-            <span className="font-bold text-slate-900 dark:text-white">{formatCurrencyNPR(summary.bankBalance)}</span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500 dark:text-slate-400">डिजिटल (eSewa/Khalti):</span>
-            <span className="font-bold text-slate-900 dark:text-white">{formatCurrencyNPR(summary.digitalWalletBalance)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Ledger Card */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
-        
-        {/* Navigation Tabs & Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 pt-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-          
-          {/* Tabs */}
-          <div className="flex items-center gap-1 overflow-x-auto">
-            <button
-              onClick={() => setActiveTab('all')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-bold transition whitespace-nowrap ${
-                activeTab === 'all'
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              सबै (All) ({transactions.length})
-            </button>
-
-            <button
-              onClick={() => setActiveTab('payments')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-bold transition whitespace-nowrap ${
-                activeTab === 'payments'
-                  ? 'bg-rose-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              खर्च (Expenses)
-            </button>
-
-            <button
-              onClick={() => setActiveTab('receipts')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-bold transition whitespace-nowrap ${
-                activeTab === 'receipts'
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              आम्दानी (Income)
-            </button>
-
-            <button
-              onClick={() => setActiveTab('transfers')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-bold transition whitespace-nowrap ${
-                activeTab === 'transfers'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              ट्रान्सफर (Transfer)
-            </button>
-
-            <button
-              onClick={() => setActiveTab('daybook')}
-              className={`rounded-xl px-3 py-1.5 text-xs font-bold transition whitespace-nowrap ${
-                activeTab === 'daybook'
-                  ? 'bg-amber-600 text-white'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              दैनिक हिसाब (Daybook)
-            </button>
-          </div>
-
-          {/* Quick Search, Category & Date Filters */}
-          <div className="flex items-center flex-wrap gap-2">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-              <input
-                type="text"
-                value={localSearch}
-                onChange={(e) => setLocalSearch(e.target.value)}
-                placeholder="खोज्नुहोस्..."
-                className="w-32 sm:w-40 rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-2.5 text-xs font-medium outline-none transition focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
-            </div>
-
-            {/* Category Filter */}
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-2.5 text-xs font-medium text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-            >
-              <option value="all">सबै शीर्षक (All Categories)</option>
-              {availableCategories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-
-            {/* Date Filter */}
-            <select
-              value={dateFilter}
-              onChange={(e) => setDateFilter(e.target.value as DateFilterType)}
-              className="rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-2.5 text-xs font-medium text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-            >
-              <option value="all">सबै मिति (All Dates)</option>
-              <option value="today">आज (Today)</option>
-              <option value="yesterday">हिजो (Yesterday)</option>
-              <option value="this_month">यस महिना (This Month)</option>
-              <option value="last_month">गत महिना (Last Month)</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Content Area */}
-        {loading ? (
-          <div className="py-16 text-center text-slate-400 text-xs font-medium">
-            लोड हुँदैछ...
-          </div>
-        ) : filteredTransactions.length === 0 ? (
-          <div className="py-16 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800">
-              <Receipt className="h-6 w-6" />
-            </div>
-            <h4 className="mt-3 text-sm font-bold text-slate-800 dark:text-slate-200">
-              कुनै कारोबार भेटिएन
-            </h4>
-            <p className="mt-1 text-xs text-slate-400">
-              नयाँ खर्च वा आम्दानी दर्ता गर्न माथिका बटनहरू प्रयोग गर्नुहोस्
-            </p>
-            <div className="mt-4 flex items-center justify-center gap-2">
+      {/* Filter & Search Bar */}
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row gap-4 items-center justify-between">
+        <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+          {/* Type Filter Buttons */}
+          <div className="inline-flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+            {(['ALL', 'RECEIPT', 'PAYMENT', 'TRANSFER'] as const).map((t) => (
               <button
-                onClick={() => handleOpenAddModal('payment')}
-                className="rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs"
+                key={t}
+                onClick={() => setTypeFilter(t)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  typeFilter === t
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
               >
-                + Record Expense
+                {t === 'ALL' ? 'All' : t === 'RECEIPT' ? 'Income' : t === 'PAYMENT' ? 'Expense' : 'Transfer'}
               </button>
-              <button
-                onClick={() => handleOpenAddModal('receipt')}
-                className="rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs"
-              >
-                + Record Receipt
-              </button>
-            </div>
-          </div>
-        ) : activeTab === 'daybook' ? (
-          /* Daybook Grouped View */
-          <div className="divide-y divide-slate-100 dark:divide-y dark:divide-slate-800">
-            {daybookGroups.map((group) => (
-              <div key={group.date} className="p-4 space-y-2.5">
-                <div className="flex items-center justify-between bg-slate-50/80 px-3 py-1.5 rounded-xl dark:bg-slate-800/60">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    📅 {group.date}
-                  </span>
-                  <div className="flex items-center gap-3 text-xs font-bold">
-                    <span className="text-emerald-600 dark:text-emerald-400">
-                      +{formatCurrencyNPR(group.totalReceipt)}
-                    </span>
-                    <span className="text-rose-600 dark:text-rose-400">
-                      -{formatCurrencyNPR(group.totalPayment)}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-lg text-[11px] ${
-                      group.net >= 0
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-                        : 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
-                    }`}>
-                      Net: {formatCurrencyNPR(group.net)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5 pl-2">
-                  {group.items.map((tx) => (
-                    <div
-                      key={tx.id}
-                      className="flex items-center justify-between py-1.5 px-2 hover:bg-slate-50/60 rounded-lg transition dark:hover:bg-slate-800/40 text-xs"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div
-                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${
-                            tx.type === 'receipt'
-                              ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400'
-                              : tx.type === 'payment'
-                              ? 'bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400'
-                              : 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400'
-                          }`}
-                        >
-                          {tx.type === 'receipt' ? (
-                            <ArrowDownLeft className="h-3.5 w-3.5" />
-                          ) : tx.type === 'payment' ? (
-                            <ArrowUpRight className="h-3.5 w-3.5" />
-                          ) : (
-                            <ArrowLeftRight className="h-3.5 w-3.5" />
-                          )}
-                        </div>
-                        <div className="truncate">
-                          <p className="font-semibold text-slate-900 dark:text-white truncate">
-                            {tx.description || tx.partyName}
-                          </p>
-                          <p className="text-[10px] text-slate-400">
-                            {tx.category} • {tx.paymentMethod}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        <span
-                          className={`font-black ${
-                            tx.type === 'receipt'
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : tx.type === 'payment'
-                              ? 'text-rose-600 dark:text-rose-400'
-                              : 'text-indigo-600 dark:text-indigo-400'
-                          }`}
-                        >
-                          {tx.type === 'receipt' ? '+' : tx.type === 'payment' ? '-' : ''}
-                          {formatCurrencyNPR(tx.amount)}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => setVoucherTx(tx)}
-                            title="View Voucher"
-                            className="p-1 text-slate-400 hover:text-indigo-600 transition"
-                          >
-                            <Receipt className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleEdit(tx)}
-                            title="Edit"
-                            className="p-1 text-slate-400 hover:text-indigo-600 transition"
-                          >
-                            <Edit3 className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => setDeletingTx(tx)}
-                            title="Delete"
-                            className="p-1 text-slate-400 hover:text-rose-600 transition"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             ))}
           </div>
+
+          {/* Date Filter */}
+          <select
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value as any)}
+            className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold border-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All Time</option>
+            <option value="today">Today</option>
+            <option value="this_month">This Month</option>
+          </select>
+
+          {/* Category Filter */}
+          <select
+            value={selectedCategoryFilter}
+            onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+            className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold border-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="ALL">All Categories</option>
+            {allCategories.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Search Input */}
+        <div className="relative w-full md:w-72">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+            <Search className="h-4 w-4" />
+          </div>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search transactions..."
+            className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-medium border-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+      </div>
+
+      {/* Transactions Table */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+        {filteredTransactions.length === 0 ? (
+          <div className="p-12 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 mb-3">
+              <DollarSign className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">No transactions found</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Get started by adding your first income or expense transaction.
+            </p>
+            <button
+              onClick={() => onOpenModal('RECEIPT')}
+              className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-all shadow-sm"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add Transaction
+            </button>
+          </div>
         ) : (
-          /* Standard List View */
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-800/60 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="py-3 px-4">मिति (Date)</th>
-                  <th className="py-3 px-4">प्रकार (Type)</th>
-                  <th className="py-3 px-4">विवरण (Description)</th>
-                  <th className="py-3 px-4">शीर्षक (Category)</th>
-                  <th className="py-3 px-4">माध्यम (Mode)</th>
-                  <th className="py-3 px-4 text-right">रकम (Amount)</th>
-                  <th className="py-3 px-4 text-right">कार्य (Action)</th>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <th className="py-3 px-4">Type</th>
+                  <th className="py-3 px-4">Date</th>
+                  <th className="py-3 px-4">Category</th>
+                  <th className="py-3 px-4">Description / Party</th>
+                  <th className="py-3 px-4">Payment Method</th>
+                  <th className="py-3 px-4 text-right">Amount (Rs.)</th>
+                  <th className="py-3 px-4 text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                {filteredTransactions.map((tx) => (
-                  <tr
-                    key={tx.id}
-                    className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition group"
-                  >
-                    <td className="py-3 px-4 whitespace-nowrap font-medium text-slate-600 dark:text-slate-400">
-                      {tx.date}
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${
-                          tx.type === 'receipt'
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                            : tx.type === 'payment'
-                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                            : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
-                        }`}
-                      >
-                        {tx.type === 'receipt' ? 'Receipt' : tx.type === 'payment' ? 'Payment' : 'Transfer'}
-                      </span>
-                    </td>
-
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${
-                            tx.type === 'receipt'
-                              ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400'
-                              : tx.type === 'payment'
-                              ? 'bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400'
-                              : 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400'
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                {filteredTransactions.map((tx) => {
+                  const isIncome = tx.type === 'RECEIPT';
+                  const isExpense = tx.type === 'PAYMENT';
+                  return (
+                    <tr
+                      key={tx.id}
+                      className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors group"
+                    >
+                      <td className="py-3.5 px-4">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                            isIncome
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                              : isExpense
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                              : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
                           }`}
                         >
-                          {tx.type === 'receipt' ? (
-                            <ArrowDownLeft className="h-3.5 w-3.5" />
-                          ) : tx.type === 'payment' ? (
-                            <ArrowUpRight className="h-3.5 w-3.5" />
-                          ) : (
-                            <ArrowLeftRight className="h-3.5 w-3.5" />
-                          )}
-                        </div>
-                        <span className="font-bold text-slate-900 dark:text-white">
-                          {tx.description || tx.partyName}
+                          {isIncome ? <ArrowDownLeft className="h-3 w-3" /> : isExpense ? <ArrowUpRight className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" />}
+                          {tx.type}
                         </span>
-                      </div>
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-slate-600 dark:text-slate-300">
-                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                      </td>
+                      <td className="py-3.5 px-4 font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        {tx.transactionDate}
+                      </td>
+                      <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white">
                         {tx.category}
-                      </span>
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-slate-500 dark:text-slate-400">
-                      {tx.type === 'transfer' && tx.transferToMethod
-                        ? `${tx.paymentMethod} ➔ ${tx.transferToMethod}`
-                        : tx.paymentMethod}
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-right font-black">
-                      <span
-                        className={
-                          tx.type === 'receipt'
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : tx.type === 'payment'
-                            ? 'text-rose-600 dark:text-rose-400'
-                            : 'text-indigo-600 dark:text-indigo-400'
-                        }
-                      >
-                        {tx.type === 'receipt' ? '+' : tx.type === 'payment' ? '-' : ''}
-                        {formatCurrencyNPR(tx.amount)}
-                      </span>
-                    </td>
-
-                    <td className="py-3 px-4 whitespace-nowrap text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => setVoucherTx(tx)}
-                          title="View Official Voucher"
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 transition dark:hover:bg-slate-800 dark:hover:text-indigo-400"
-                        >
-                          <Receipt className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleEdit(tx)}
-                          title="Edit"
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 transition dark:hover:bg-slate-800 dark:hover:text-indigo-400"
-                        >
-                          <Edit3 className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setDeletingTx(tx)}
-                          title="Delete"
-                          className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300 max-w-xs truncate">
+                        {tx.description || <span className="text-slate-400 italic">No description</span>}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300">
+                        <span className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 font-medium">
+                          {tx.paymentMethod}
+                        </span>
+                      </td>
+                      <td className={`py-3.5 px-4 text-right font-bold text-sm whitespace-nowrap ${
+                        isIncome ? 'text-emerald-600 dark:text-emerald-400' : isExpense ? 'text-rose-600 dark:text-rose-400' : 'text-blue-600 dark:text-blue-400'
+                      }`}>
+                        {isIncome ? '+' : isExpense ? '-' : ''}Rs. {tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => onOpenModal(tx.type, tx)}
+                            title="Edit Transaction"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors"
+                          >
+                            <Edit3 className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm('Are you sure you want to delete this transaction?')) {
+                                onDeleteTransaction(tx.id);
+                              }
+                            }}
+                            title="Delete Transaction"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
-
-      {/* Entry Modal */}
-      <TransactionModal
-        isOpen={isModalOpen}
-        onClose={() => {
-          setIsModalOpen(false);
-          setEditingTransaction(null);
-        }}
-        onSave={handleSaveTransaction}
-        initialTransaction={editingTransaction}
-        defaultType={modalDefaultType}
-      />
-
-      {/* Official Voucher Preview Modal */}
-      <TransactionVoucherModal
-        isOpen={!!voucherTx}
-        onClose={() => setVoucherTx(null)}
-        transaction={voucherTx}
-      />
-
-      {/* Delete Single Confirmation Modal */}
-      <ConfirmDeleteModal
-        isOpen={!!deletingTx}
-        onClose={() => setDeletingTx(null)}
-        onConfirm={handleDeleteConfirm}
-        title="Delete Transaction?"
-        message={`Are you sure you want to delete "${deletingTx?.description || deletingTx?.partyName || 'this record'}" of ${deletingTx ? formatCurrencyNPR(deletingTx.amount) : ''}?`}
-      />
-
-      {/* Clear All Confirmation Modal */}
-      <ConfirmDeleteModal
-        isOpen={isClearAllModalOpen}
-        onClose={() => setIsClearAllModalOpen(false)}
-        onConfirm={handleClearAllConfirm}
-        title="Delete All Transactions?"
-        message="Are you sure you want to delete all transaction records and reset your balance to Rs. 0? This action cannot be undone."
-      />
     </div>
   );
 };

@@ -7,18 +7,12 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   Note,
   TodoTask,
-  WorkLog,
   Folder,
   UserFile,
+  UserTransaction,
   UserSession,
   UserRole,
   UserProfile,
-  ChatMessage,
-  ChatUser,
-  MessageReaction,
-  Transaction,
-  TransactionType,
-  PaymentMethod,
 } from '../types';
 import {
   SUPABASE_URL,
@@ -696,12 +690,8 @@ export async function deleteUserAccount(
       // Delete user data from all tables
       await client.from('notes').delete().eq('user_id', userId);
       await client.from('todos').delete().eq('user_id', userId);
-      await client.from('work_logs').delete().eq('user_id', userId);
       await client.from('files').delete().eq('user_id', userId);
       await client.from('folders').delete().eq('user_id', userId);
-      await client.from('share_portfolio').delete().eq('user_id', userId);
-      await client.from('share_trades').delete().eq('user_id', userId);
-      await client.from('share_watchlist').delete().eq('user_id', userId);
       await client.from('profiles').delete().eq('id', userId);
 
       // Attempt to sign out
@@ -715,13 +705,9 @@ export async function deleteUserAccount(
   try {
     localStorage.removeItem(`ws_notes_${userId}`);
     localStorage.removeItem(`ws_todos_${userId}`);
-    localStorage.removeItem(`ws_worklogs_${userId}`);
     localStorage.removeItem(`ws_folders_${userId}`);
     localStorage.removeItem(`ws_files_${userId}`);
     localStorage.removeItem(`ws_trash_${userId}`);
-    localStorage.removeItem(`ws_sharemarket_portfolio_${userId}`);
-    localStorage.removeItem(`ws_sharemarket_trades_${userId}`);
-    localStorage.removeItem(`ws_sharemarket_watchlist_${userId}`);
     localStorage.removeItem(STORAGE_KEY_USER);
 
     // Remove from local profiles
@@ -1412,157 +1398,236 @@ export const fetchNotes = syncFetchNotes;
 export const fetchTodos = syncFetchTodos;
 
 // -----------------------------------------------------------------------------
-// Work Logs Sync Operations
+// Transactions Operations
 // -----------------------------------------------------------------------------
 
-export async function syncFetchWorkLogs(userId: string): Promise<{ worklogs: WorkLog[]; isCloud: boolean }> {
+export const getUserTransactionsKey = (userId: string) => `ws_transactions_${userId}`;
+
+export async function syncFetchTransactions(
+  userId: string
+): Promise<{ transactions: UserTransaction[]; isCloud: boolean }> {
   const client = getSupabase();
-  const localKey = `ws_worklogs_${userId}`;
+  const localKey = getUserTransactionsKey(userId);
 
   if (client) {
     try {
       const { data, error } = await client
-        .from('work_logs')
+        .from('user_transactions')
         .select('*')
         .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+        .order('transaction_date', { ascending: false });
 
       if (!error && data) {
-        const mappedLogs: WorkLog[] = data.map((item: any) => ({
-          id: item.id || `worklog-${Date.now()}`,
-          projectName: item.project_name || '',
-          taskDescription: item.description || '',
-          hoursSpent:
-            (item.duration_minutes ? item.duration_minutes / 60 : 0) || Number(item.hours_spent || 0),
-          date: item.log_date || item.date || new Date().toISOString().split('T')[0],
-          startTime: item.start_time || undefined,
-          endTime: item.end_time || undefined,
-          category: item.category || 'General',
-          createdAt: item.created_at || new Date().toISOString(),
+        const mapped: UserTransaction[] = data.map((row: any) => ({
+          id: row.id,
+          userId: row.user_id || userId,
+          type: row.type || 'RECEIPT',
+          category: row.category || 'General',
+          amount: Number(row.amount) || 0,
+          paymentMethod: row.payment_method || 'Cash',
+          description: row.description || '',
+          transactionDate: row.transaction_date || new Date().toISOString().split('T')[0],
+          createdAt: row.created_at || new Date().toISOString(),
         }));
 
         try {
-          localStorage.setItem(localKey, JSON.stringify(mappedLogs));
-        } catch {
-          // ignore
-        }
-        return { worklogs: mappedLogs, isCloud: true };
-      }
-    } catch (err) {
-      console.warn('Error fetching work logs from Supabase:', err);
-    }
-  }
-
-  try {
-    const raw = localStorage.getItem(localKey);
-    if (raw) return { worklogs: JSON.parse(raw), isCloud: false };
-  } catch (e) {
-    console.error('Error reading worklogs', e);
-  }
-
-  return { worklogs: [], isCloud: false };
-}
-
-export async function syncSaveWorkLog(
-  userId: string,
-  log: WorkLog
-): Promise<{ data: WorkLog | null; error: string | null }> {
-  const client = getSupabase();
-  const localKey = `ws_worklogs_${userId}`;
-
-  if (client) {
-    try {
-      const durationMinutes = Math.round(log.hoursSpent * 60);
-      const payload: Record<string, any> = {
-        id: log.id,
-        user_id: userId,
-        project_name: log.projectName,
-        description: log.taskDescription,
-        duration_minutes: durationMinutes,
-        hours_spent: log.hoursSpent,
-        log_date: log.date,
-        date: log.date,
-        start_time: log.startTime || null,
-        end_time: log.endTime || null,
-        category: log.category || 'General',
-        created_at: log.createdAt || new Date().toISOString(),
-      };
-
-      const res = await client.from('work_logs').upsert(payload, { onConflict: 'id' }).select().single();
-
-      if (!res.error && res.data) {
-        const savedLog: WorkLog = {
-          id: res.data.id,
-          projectName: res.data.project_name || '',
-          taskDescription: res.data.description || '',
-          hoursSpent:
-            (res.data.duration_minutes ? res.data.duration_minutes / 60 : 0) || Number(res.data.hours_spent || 0),
-          date: res.data.log_date || res.data.date || new Date().toISOString().split('T')[0],
-          startTime: res.data.start_time || undefined,
-          endTime: res.data.end_time || undefined,
-          category: res.data.category || 'General',
-          createdAt: res.data.created_at || log.createdAt,
-        };
-
-        try {
-          const raw = localStorage.getItem(localKey);
-          const currentList: WorkLog[] = raw ? JSON.parse(raw) : [];
-          const idx = currentList.findIndex((w) => w.id === savedLog.id || w.id === log.id);
-          if (idx !== -1) {
-            currentList[idx] = savedLog;
-          } else {
-            currentList.unshift(savedLog);
-          }
-          localStorage.setItem(localKey, JSON.stringify(currentList));
+          localStorage.setItem(localKey, JSON.stringify(mapped));
         } catch (e) {
-          console.warn('Error caching work log locally', e);
+          console.warn('Failed to cache transactions locally', e);
         }
 
-        return { data: savedLog, error: null };
+        return { transactions: mapped, isCloud: true };
       }
-    } catch (e: any) {
-      console.error('Error saving work log in Supabase:', e);
+    } catch (e) {
+      console.warn('Exception during syncFetchTransactions, falling back to local:', e);
     }
   }
-
-  try {
-    const raw = localStorage.getItem(localKey);
-    const currentList: WorkLog[] = raw ? JSON.parse(raw) : [];
-    const idx = currentList.findIndex((w) => w.id === log.id);
-    if (idx !== -1) {
-      currentList[idx] = log;
-    } else {
-      currentList.unshift(log);
-    }
-    localStorage.setItem(localKey, JSON.stringify(currentList));
-    return { data: log, error: null };
-  } catch (e: any) {
-    return { data: null, error: e?.message || 'Failed to save work log locally' };
-  }
-}
-
-export async function syncDeleteWorkLog(userId: string, logId: string): Promise<boolean> {
-  const client = getSupabase();
-  const localKey = `ws_worklogs_${userId}`;
 
   try {
     const raw = localStorage.getItem(localKey);
     if (raw) {
-      const currentList: WorkLog[] = JSON.parse(raw);
-      localStorage.setItem(localKey, JSON.stringify(currentList.filter((w) => w.id !== logId)));
+      return { transactions: JSON.parse(raw), isCloud: false };
     }
   } catch (e) {
-    console.warn('Error deleting worklog from local cache', e);
+    console.error('Error parsing local transactions', e);
+  }
+
+  return { transactions: [], isCloud: false };
+}
+
+export async function syncSaveTransaction(
+  userId: string,
+  tx: UserTransaction
+): Promise<{ data: UserTransaction | null; error: string | null }> {
+  const client = getSupabase();
+  const localKey = getUserTransactionsKey(userId);
+
+  if (client) {
+    try {
+      const payload: Record<string, any> = {
+        id: tx.id,
+        user_id: userId,
+        type: tx.type,
+        category: tx.category || 'General',
+        amount: Number(tx.amount) || 0,
+        payment_method: tx.paymentMethod || 'Cash',
+        description: tx.description || '',
+        transaction_date: tx.transactionDate || new Date().toISOString().split('T')[0],
+      };
+
+      const { data, error } = await client
+        .from('user_transactions')
+        .upsert(payload, { onConflict: 'id' })
+        .select()
+        .single();
+
+      if (!error && data) {
+        const saved: UserTransaction = {
+          id: data.id,
+          userId: data.user_id || userId,
+          type: data.type,
+          category: data.category || 'General',
+          amount: Number(data.amount) || 0,
+          paymentMethod: data.payment_method || 'Cash',
+          description: data.description || '',
+          transactionDate: data.transaction_date || tx.transactionDate,
+          createdAt: data.created_at || tx.createdAt,
+        };
+
+        try {
+          const raw = localStorage.getItem(localKey);
+          const list: UserTransaction[] = raw ? JSON.parse(raw) : [];
+          const idx = list.findIndex((t) => t.id === saved.id || t.id === tx.id);
+          if (idx !== -1) list[idx] = saved;
+          else list.unshift(saved);
+          localStorage.setItem(localKey, JSON.stringify(list));
+        } catch (e) {
+          console.warn('Error caching transaction locally', e);
+        }
+
+        return { data: saved, error: null };
+      } else if (error) {
+        console.warn('Supabase transaction save error:', error.message);
+      }
+    } catch (e: any) {
+      console.warn('Exception saving transaction in Supabase:', e);
+    }
+  }
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    const list: UserTransaction[] = raw ? JSON.parse(raw) : [];
+    const idx = list.findIndex((t) => t.id === tx.id);
+    if (idx !== -1) list[idx] = tx;
+    else list.unshift(tx);
+    localStorage.setItem(localKey, JSON.stringify(list));
+    return { data: tx, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message || 'Failed to save transaction locally' };
+  }
+}
+
+export async function syncDeleteTransaction(
+  userId: string,
+  txId: string
+): Promise<boolean> {
+  const client = getSupabase();
+  const localKey = getUserTransactionsKey(userId);
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const list: UserTransaction[] = JSON.parse(raw);
+      localStorage.setItem(localKey, JSON.stringify(list.filter((t) => t.id !== txId)));
+    }
+  } catch (e) {
+    console.warn('Error removing transaction from local cache', e);
   }
 
   if (client) {
     try {
-      await client.from('work_logs').delete().eq('id', logId).eq('user_id', userId);
+      await client.from('user_transactions').delete().eq('id', txId).eq('user_id', userId);
     } catch (e) {
-      console.warn('Error deleting work log from Supabase:', e);
+      console.warn('Error deleting transaction from Supabase:', e);
     }
   }
   return true;
+}
+
+export function subscribeToTransactions(
+  userId: string,
+  onInsert: (tx: UserTransaction) => void,
+  onUpdate: (tx: UserTransaction) => void,
+  onDelete: (txId: string) => void
+): () => void {
+  const client = getSupabase();
+  if (!client) return () => {};
+
+  try {
+    const channelName = `user_transactions_channel_${userId}`;
+    const channel = client.channel(channelName);
+
+    channel
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'user_transactions', filter: `user_id=eq.${userId}` },
+        (payload: any) => {
+          if (payload.new) {
+            const row = payload.new;
+            const tx: UserTransaction = {
+              id: row.id,
+              userId: row.user_id,
+              type: row.type,
+              category: row.category,
+              amount: Number(row.amount) || 0,
+              paymentMethod: row.payment_method,
+              description: row.description,
+              transactionDate: row.transaction_date,
+              createdAt: row.created_at,
+            };
+            onInsert(tx);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'user_transactions', filter: `user_id=eq.${userId}` },
+        (payload: any) => {
+          if (payload.new) {
+            const row = payload.new;
+            const tx: UserTransaction = {
+              id: row.id,
+              userId: row.user_id,
+              type: row.type,
+              category: row.category,
+              amount: Number(row.amount) || 0,
+              paymentMethod: row.payment_method,
+              description: row.description,
+              transactionDate: row.transaction_date,
+              createdAt: row.created_at,
+            };
+            onUpdate(tx);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'user_transactions', filter: `user_id=eq.${userId}` },
+        (payload: any) => {
+          if (payload.old && payload.old.id) {
+            onDelete(payload.old.id);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  } catch (err) {
+    console.warn('Error setting up transactions realtime subscription:', err);
+    return () => {};
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -2023,1237 +2088,6 @@ export async function syncDownloadFile(file: {
 }
 
 // -----------------------------------------------------------------------------
-// Real-time Workspace Chat System (Direct 1-on-1 & Team Channel)
-// -----------------------------------------------------------------------------
-
-export const STORAGE_KEY_CHAT_MESSAGES = 'workspace_chat_messages';
-
-export async function fetchWorkspaceChatUsers(): Promise<ChatUser[]> {
-  const client = getSupabase();
-  const profilesMap = new Map<string, ChatUser>();
-
-  // 1. Check profiles in Supabase
-  if (client) {
-    try {
-      const { data, error } = await client
-        .from('profiles')
-        .select('id, email, full_name, phone_number, avatar_url, role, updated_at')
-        .order('created_at', { ascending: true });
-
-      if (!error && data) {
-        data.forEach((p: any) => {
-          profilesMap.set(p.id, {
-            id: p.id,
-            email: p.email,
-            fullName: p.full_name || p.email.split('@')[0],
-            phoneNumber: p.phone_number,
-            avatarUrl: p.avatar_url,
-            role: (p.role as UserRole) || 'user',
-            isOnline: false,
-            lastSeen: p.updated_at,
-          });
-        });
-      }
-    } catch (e) {
-      console.warn('Error fetching profiles for chat:', e);
-    }
-  }
-
-  // 2. Supplement / fallback with local stored profiles
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_PROFILES);
-    if (raw) {
-      const localProfiles: UserProfile[] = JSON.parse(raw);
-      localProfiles.forEach((p) => {
-        if (!profilesMap.has(p.id)) {
-          profilesMap.set(p.id, {
-            id: p.id,
-            email: p.email,
-            fullName: p.fullName || p.email.split('@')[0],
-            phoneNumber: p.phoneNumber,
-            avatarUrl: p.avatarUrl,
-            role: p.role,
-            isOnline: false,
-            lastSeen: p.updatedAt,
-          });
-        }
-      });
-    }
-  } catch (e) {
-    console.warn('Error reading local profiles for chat:', e);
-  }
-
-  return Array.from(profilesMap.values());
-}
-
-export async function fetchChatMessages(
-  currentUserId: string,
-  targetRecipientId: string = 'general'
-): Promise<{ messages: ChatMessage[]; isCloud: boolean }> {
-  const client = getSupabase();
-
-  if (client) {
-    try {
-      let query = client
-        .from('chat_messages')
-        .select('*')
-        .order('created_at', { ascending: true })
-        .limit(300);
-
-      if (targetRecipientId === 'general') {
-        query = query.or('receiver_id.eq.general,receiver_id.is.null');
-      } else {
-        // Direct messages between current user and target user
-        query = query.or(
-          `and(sender_id.eq.${currentUserId},receiver_id.eq.${targetRecipientId}),and(sender_id.eq.${targetRecipientId},receiver_id.eq.${currentUserId})`
-        );
-      }
-
-      const { data, error } = await query;
-
-      if (!error && data) {
-        const mapped: ChatMessage[] = data.map((row: any) => ({
-          id: row.id,
-          senderId: row.sender_id,
-          senderName: row.sender_name || 'User',
-          senderEmail: row.sender_email || '',
-          senderAvatar: row.sender_avatar,
-          senderRole: (row.sender_role as UserRole) || 'user',
-          receiverId: row.receiver_id || 'general',
-          content: row.content || '',
-          attachmentUrl: row.attachment_url,
-          attachmentName: row.attachment_name,
-          attachmentType: row.attachment_type as ('image' | 'file' | undefined),
-          replyToId: row.reply_to_id,
-          replyToSnippet: row.reply_to_snippet,
-          replyToSender: row.reply_to_sender,
-          reactions: Array.isArray(row.reactions) ? row.reactions : [],
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-          isDeleted: row.is_deleted || false,
-        }));
-
-        // Cache messages locally
-        try {
-          const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
-          const allCached: ChatMessage[] = raw ? JSON.parse(raw) : [];
-          const otherChannelMessages = allCached.filter((m) => {
-            if (targetRecipientId === 'general') {
-              return m.receiverId && m.receiverId !== 'general';
-            }
-            return !(
-              (m.senderId === currentUserId && m.receiverId === targetRecipientId) ||
-              (m.senderId === targetRecipientId && m.receiverId === currentUserId)
-            );
-          });
-          localStorage.setItem(
-            STORAGE_KEY_CHAT_MESSAGES,
-            JSON.stringify([...otherChannelMessages, ...mapped])
-          );
-        } catch (e) {
-          console.warn('Error caching chat messages:', e);
-        }
-
-        return { messages: mapped, isCloud: true };
-      }
-    } catch (e) {
-      console.warn('Error fetching cloud chat messages:', e);
-    }
-  }
-
-  // Fallback to local cache
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
-    if (raw) {
-      const allCached: ChatMessage[] = JSON.parse(raw);
-      const filtered = allCached.filter((m) => {
-        if (targetRecipientId === 'general') {
-          return !m.receiverId || m.receiverId === 'general';
-        }
-        return (
-          (m.senderId === currentUserId && m.receiverId === targetRecipientId) ||
-          (m.senderId === targetRecipientId && m.receiverId === currentUserId)
-        );
-      });
-      return { messages: filtered, isCloud: false };
-    }
-  } catch (e) {
-    console.warn('Error reading local chat messages cache:', e);
-  }
-
-  return { messages: [], isCloud: false };
-}
-
-export async function sendChatMessage(
-  message: ChatMessage
-): Promise<{ data: ChatMessage | null; error: string | null }> {
-  const client = getSupabase();
-
-  // Save to local cache first (Optimistic)
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
-    const list: ChatMessage[] = raw ? JSON.parse(raw) : [];
-    const exists = list.some((m) => m.id === message.id);
-    if (!exists) {
-      list.push(message);
-      localStorage.setItem(STORAGE_KEY_CHAT_MESSAGES, JSON.stringify(list));
-    }
-  } catch (e) {
-    console.warn('Error locally caching sent chat message:', e);
-  }
-
-  if (client) {
-    try {
-      const dbRow: Record<string, any> = {
-        id: message.id,
-        sender_id: message.senderId,
-        sender_name: message.senderName,
-        sender_email: message.senderEmail,
-        sender_avatar: message.senderAvatar || null,
-        sender_role: message.senderRole || 'user',
-        receiver_id: message.receiverId || 'general',
-        content: message.content,
-        attachment_url: message.attachmentUrl || null,
-        attachment_name: message.attachmentName || null,
-        attachment_type: message.attachmentType || null,
-        reply_to_id: message.replyToId || null,
-        reply_to_snippet: message.replyToSnippet || null,
-        reply_to_sender: message.replyToSender || null,
-        reactions: message.reactions || [],
-        is_deleted: false,
-        created_at: message.createdAt || new Date().toISOString(),
-        updated_at: message.updatedAt || new Date().toISOString(),
-      };
-
-      const { data, error } = await client
-        .from('chat_messages')
-        .insert(dbRow)
-        .select()
-        .single();
-
-      if (error) {
-        console.warn('Supabase chat insert error:', error);
-        return { data: message, error: error.message };
-      }
-
-      if (data) {
-        const saved: ChatMessage = {
-          id: data.id,
-          senderId: data.sender_id,
-          senderName: data.sender_name,
-          senderEmail: data.sender_email,
-          senderAvatar: data.sender_avatar,
-          senderRole: (data.sender_role as UserRole) || 'user',
-          receiverId: data.receiver_id,
-          content: data.content,
-          attachmentUrl: data.attachment_url,
-          attachmentName: data.attachment_name,
-          attachmentType: data.attachment_type,
-          replyToId: data.reply_to_id,
-          replyToSnippet: data.reply_to_snippet,
-          replyToSender: data.reply_to_sender,
-          reactions: Array.isArray(data.reactions) ? data.reactions : [],
-          createdAt: data.created_at,
-          updatedAt: data.updated_at,
-          isDeleted: data.is_deleted,
-        };
-        return { data: saved, error: null };
-      }
-    } catch (e: any) {
-      console.warn('Failed to insert chat message in Supabase:', e);
-      return { data: message, error: e?.message || 'Chat insert error' };
-    }
-  }
-
-  return { data: message, error: null };
-}
-
-export async function deleteChatMessage(
-  messageId: string,
-  currentUserId: string
-): Promise<{ success: boolean; error: string | null }> {
-  const client = getSupabase();
-
-  // Remove from local cache
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
-    if (raw) {
-      const list: ChatMessage[] = JSON.parse(raw);
-      const updated = list.filter((m) => m.id !== messageId);
-      localStorage.setItem(STORAGE_KEY_CHAT_MESSAGES, JSON.stringify(updated));
-    }
-  } catch (e) {
-    console.warn('Error deleting message from local cache:', e);
-  }
-
-  if (client) {
-    try {
-      const { error } = await client
-        .from('chat_messages')
-        .delete()
-        .eq('id', messageId);
-
-      if (error) {
-        return { success: false, error: error.message };
-      }
-    } catch (e: any) {
-      return { success: false, error: e?.message || 'Delete message failed' };
-    }
-  }
-
-  return { success: true, error: null };
-}
-
-export async function toggleChatMessageReaction(
-  messageId: string,
-  emoji: string,
-  currentUserId: string
-): Promise<{ success: boolean; reactions?: MessageReaction[]; error?: string }> {
-  const client = getSupabase();
-
-  let updatedReactions: MessageReaction[] = [];
-
-  // Update in local cache
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CHAT_MESSAGES);
-    if (raw) {
-      const list: ChatMessage[] = JSON.parse(raw);
-      const msg = list.find((m) => m.id === messageId);
-      if (msg) {
-        const reactions = msg.reactions ? [...msg.reactions] : [];
-        const existingIdx = reactions.findIndex((r) => r.emoji === emoji);
-
-        if (existingIdx !== -1) {
-          const r = reactions[existingIdx];
-          const hasUser = r.userIds.includes(currentUserId);
-          if (hasUser) {
-            r.userIds = r.userIds.filter((uid) => uid !== currentUserId);
-            r.count = r.userIds.length;
-            if (r.count === 0) {
-              reactions.splice(existingIdx, 1);
-            }
-          } else {
-            r.userIds.push(currentUserId);
-            r.count = r.userIds.length;
-          }
-        } else {
-          reactions.push({
-            emoji,
-            count: 1,
-            userIds: [currentUserId],
-          });
-        }
-
-        msg.reactions = reactions;
-        updatedReactions = reactions;
-        localStorage.setItem(STORAGE_KEY_CHAT_MESSAGES, JSON.stringify(list));
-      }
-    }
-  } catch (e) {
-    console.warn('Error toggling reaction locally:', e);
-  }
-
-  if (client) {
-    try {
-      // Fetch latest message reactions from Supabase
-      const { data: currentMsg } = await client
-        .from('chat_messages')
-        .select('reactions')
-        .eq('id', messageId)
-        .single();
-
-      let reactions: MessageReaction[] = Array.isArray(currentMsg?.reactions)
-        ? currentMsg.reactions
-        : updatedReactions;
-
-      const existingIdx = reactions.findIndex((r) => r.emoji === emoji);
-      if (existingIdx !== -1) {
-        const r = { ...reactions[existingIdx] };
-        const hasUser = r.userIds.includes(currentUserId);
-        if (hasUser) {
-          r.userIds = r.userIds.filter((uid) => uid !== currentUserId);
-          r.count = r.userIds.length;
-          if (r.count === 0) {
-            reactions.splice(existingIdx, 1);
-          } else {
-            reactions[existingIdx] = r;
-          }
-        } else {
-          r.userIds = [...r.userIds, currentUserId];
-          r.count = r.userIds.length;
-          reactions[existingIdx] = r;
-        }
-      } else {
-        reactions.push({
-          emoji,
-          count: 1,
-          userIds: [currentUserId],
-        });
-      }
-
-      await client
-        .from('chat_messages')
-        .update({ reactions, updated_at: new Date().toISOString() })
-        .eq('id', messageId);
-
-      return { success: true, reactions };
-    } catch (e: any) {
-      console.warn('Error saving reaction to Supabase:', e);
-      return { success: true, reactions: updatedReactions };
-    }
-  }
-
-  return { success: true, reactions: updatedReactions };
-}
-
-export async function uploadChatAttachment(
-  file: File,
-  currentUserId: string
-): Promise<{ publicUrl: string | null; fileName: string; fileType: 'image' | 'file'; error: string | null }> {
-  const client = getSupabase();
-  const isImage = file.type.startsWith('image/');
-  const fileType: 'image' | 'file' = isImage ? 'image' : 'file';
-
-  if (!client) {
-    const localUrl = URL.createObjectURL(file);
-    return { publicUrl: localUrl, fileName: file.name, fileType, error: null };
-  }
-
-  try {
-    const timestamp = Date.now();
-    const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `chat_${currentUserId}/${timestamp}_${cleanName}`;
-
-    // Upload to user_files bucket
-    const { error: uploadErr } = await client.storage
-      .from('user_files')
-      .upload(storagePath, file, {
-        cacheControl: '3600',
-        upsert: true,
-      });
-
-    if (uploadErr) {
-      console.warn('Chat upload to user_files bucket failed, trying avatars:', uploadErr);
-      const { error: fallbackErr } = await client.storage
-        .from('avatars')
-        .upload(storagePath, file, {
-          cacheControl: '3600',
-          upsert: true,
-        });
-
-      if (fallbackErr) {
-        return { publicUrl: null, fileName: file.name, fileType, error: fallbackErr.message };
-      }
-
-      const { data: urlData } = client.storage.from('avatars').getPublicUrl(storagePath);
-      return { publicUrl: urlData?.publicUrl || null, fileName: file.name, fileType, error: null };
-    }
-
-    const { data: urlData } = client.storage.from('user_files').getPublicUrl(storagePath);
-    return { publicUrl: urlData?.publicUrl || null, fileName: file.name, fileType, error: null };
-  } catch (err: any) {
-    console.error('Error uploading chat attachment:', err);
-    return { publicUrl: null, fileName: file.name, fileType, error: err?.message || 'Upload failed' };
-  }
-}
-
-export function subscribeToWorkspaceChat(
-  onInsert: (message: ChatMessage) => void,
-  onUpdate: (message: ChatMessage) => void,
-  onDelete: (messageId: string) => void,
-  onPresenceUpdate?: (onlineUserIds: string[]) => void,
-  currentUserSession?: UserSession | null
-): () => void {
-  const client = getSupabase();
-  if (!client) {
-    return () => {};
-  }
-
-  try {
-    const channelName = 'workspace_realtime_chat';
-    const channel = client.channel(channelName, {
-      config: {
-        presence: {
-          key: currentUserSession?.id || 'guest',
-        },
-      },
-    });
-
-    // 1. Listen for Database postgres_changes on chat_messages table
-    channel
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'chat_messages' },
-        (payload: any) => {
-          if (payload.new) {
-            const row = payload.new;
-            const msg: ChatMessage = {
-              id: row.id,
-              senderId: row.sender_id,
-              senderName: row.sender_name || 'User',
-              senderEmail: row.sender_email || '',
-              senderAvatar: row.sender_avatar,
-              senderRole: (row.sender_role as UserRole) || 'user',
-              receiverId: row.receiver_id || 'general',
-              content: row.content || '',
-              attachmentUrl: row.attachment_url,
-              attachmentName: row.attachment_name,
-              attachmentType: row.attachment_type,
-              replyToId: row.reply_to_id,
-              replyToSnippet: row.reply_to_snippet,
-              replyToSender: row.reply_to_sender,
-              reactions: Array.isArray(row.reactions) ? row.reactions : [],
-              createdAt: row.created_at,
-              updatedAt: row.updated_at,
-              isDeleted: row.is_deleted || false,
-            };
-            onInsert(msg);
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'chat_messages' },
-        (payload: any) => {
-          if (payload.new) {
-            const row = payload.new;
-            const msg: ChatMessage = {
-              id: row.id,
-              senderId: row.sender_id,
-              senderName: row.sender_name || 'User',
-              senderEmail: row.sender_email || '',
-              senderAvatar: row.sender_avatar,
-              senderRole: (row.sender_role as UserRole) || 'user',
-              receiverId: row.receiver_id || 'general',
-              content: row.content || '',
-              attachmentUrl: row.attachment_url,
-              attachmentName: row.attachment_name,
-              attachmentType: row.attachment_type,
-              replyToId: row.reply_to_id,
-              replyToSnippet: row.reply_to_snippet,
-              replyToSender: row.reply_to_sender,
-              reactions: Array.isArray(row.reactions) ? row.reactions : [],
-              createdAt: row.created_at,
-              updatedAt: row.updated_at,
-              isDeleted: row.is_deleted || false,
-            };
-            onUpdate(msg);
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'chat_messages' },
-        (payload: any) => {
-          if (payload.old && payload.old.id) {
-            onDelete(payload.old.id);
-          }
-        }
-      );
-
-    // 2. Listen to Presence (Track active users)
-    if (onPresenceUpdate) {
-      channel.on('presence', { event: 'sync' }, () => {
-        const presenceState = channel.presenceState();
-        const activeIds = Object.keys(presenceState);
-        onPresenceUpdate(activeIds);
-      });
-    }
-
-    channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED' && currentUserSession?.id) {
-        await channel.track({
-          userId: currentUserSession.id,
-          userName: currentUserSession.fullName || currentUserSession.email,
-          onlineAt: new Date().toISOString(),
-        });
-      }
-    });
-
-    return () => {
-      channel.unsubscribe();
-    };
-  } catch (err) {
-    console.warn('Error establishing realtime chat subscription:', err);
-    return () => {};
-  }
-}
-
-// -----------------------------------------------------------------------------
-// NEPSE / Share Market Transactions Helpers
-// -----------------------------------------------------------------------------
-
-export interface NepseTransaction {
-  id: string;
-  user_id?: string;
-  symbol: string;
-  transaction_type: 'BUY' | 'SELL';
-  units: number;
-  price: number;
-  transaction_date: string; // YYYY-MM-DD
-  created_at?: string;
-}
-
-/**
- * Fetch all NEPSE share market transactions for a user from Supabase.
- */
-export async function fetchTransactions(
-  userId: string
-): Promise<{ data: NepseTransaction[]; error: string | null }> {
-  const client = getSupabase();
-  if (!client) {
-    return { data: [], error: 'Supabase client is not initialized.' };
-  }
-
-  if (!userId) {
-    return { data: [], error: 'User ID is required to fetch transactions.' };
-  }
-
-  try {
-    const { data, error } = await client
-      .from('nepse_transactions')
-      .select('*')
-      .eq('user_id', userId)
-      .order('transaction_date', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching nepse_transactions from Supabase:', error.message);
-      return { data: [], error: error.message };
-    }
-
-    const formatted: NepseTransaction[] = (data || []).map((row: any) => ({
-      id: row.id,
-      user_id: row.user_id,
-      symbol: row.symbol || '',
-      transaction_type: row.transaction_type === 'SELL' ? 'SELL' : 'BUY',
-      units: Number(row.units) || 0,
-      price: Number(row.price) || 0,
-      transaction_date: row.transaction_date || new Date().toISOString().split('T')[0],
-      created_at: row.created_at,
-    }));
-
-    return { data: formatted, error: null };
-  } catch (err: any) {
-    console.error('Exception fetching nepse_transactions:', err);
-    return { data: [], error: err?.message || 'Failed to fetch transactions from Supabase' };
-  }
-}
-
-/**
- * Save or update a NEPSE transaction in Supabase.
- */
-export async function saveTransaction(
-  userId: string,
-  transactionData: {
-    id?: string;
-    symbol: string;
-    transaction_type?: 'BUY' | 'SELL';
-    action?: 'BUY' | 'SELL';
-    units: number;
-    price: number;
-    transaction_date?: string;
-    tradeDate?: string;
-  }
-): Promise<{ success: boolean; data?: NepseTransaction; error: string | null }> {
-  const client = getSupabase();
-  if (!client) {
-    return { success: false, error: 'Supabase client is not initialized.' };
-  }
-
-  if (!userId) {
-    return { success: false, error: 'User ID is required to save transaction.' };
-  }
-
-  if (!transactionData.symbol || !transactionData.symbol.trim()) {
-    return { success: false, error: 'Stock symbol is required.' };
-  }
-
-  try {
-    const txType = (transactionData.transaction_type || transactionData.action || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
-    const txDate = transactionData.transaction_date || transactionData.tradeDate || new Date().toISOString().split('T')[0];
-
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    let finalId = transactionData.id;
-
-    if (!finalId || !uuidPattern.test(finalId)) {
-      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-        finalId = crypto.randomUUID();
-      }
-    }
-
-    const payload: any = {
-      user_id: userId,
-      symbol: transactionData.symbol.toUpperCase().trim(),
-      transaction_type: txType,
-      units: Number(transactionData.units) || 0,
-      price: Number(transactionData.price) || 0,
-      transaction_date: txDate,
-    };
-
-    if (finalId && uuidPattern.test(finalId)) {
-      payload.id = finalId;
-    }
-
-    const { data, error } = await client
-      .from('nepse_transactions')
-      .upsert(payload)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error saving nepse_transaction to Supabase:', error.message);
-      return { success: false, error: error.message };
-    }
-
-    const savedRecord: NepseTransaction = {
-      id: data.id,
-      user_id: data.user_id,
-      symbol: data.symbol,
-      transaction_type: data.transaction_type,
-      units: Number(data.units),
-      price: Number(data.price),
-      transaction_date: data.transaction_date,
-      created_at: data.created_at,
-    };
-
-    return { success: true, data: savedRecord, error: null };
-  } catch (err: any) {
-    console.error('Exception saving nepse_transaction:', err);
-    return { success: false, error: err?.message || 'Failed to save transaction to Supabase' };
-  }
-}
-
-/**
- * Delete a NEPSE transaction by ID from Supabase.
- */
-export async function deleteTransaction(
-  transactionId: string
-): Promise<{ success: boolean; error: string | null }> {
-  const client = getSupabase();
-  if (!client) {
-    return { success: false, error: 'Supabase client is not initialized.' };
-  }
-
-  if (!transactionId) {
-    return { success: false, error: 'Transaction ID is required for deletion.' };
-  }
-
-  try {
-    const { error } = await client
-      .from('nepse_transactions')
-      .delete()
-      .eq('id', transactionId);
-
-    if (error) {
-      console.error('Error deleting nepse_transaction from Supabase:', error.message);
-      return { success: false, error: error.message };
-    }
-
-    return { success: true, error: null };
-  } catch (err: any) {
-    console.error('Exception deleting nepse_transaction:', err);
-    return { success: false, error: err?.message || 'Failed to delete transaction' };
-  }
-}
-
-// -----------------------------------------------------------------------------
-// User Transactions (Accounting / Daybook) Operations
-// -----------------------------------------------------------------------------
-
-export async function syncFetchUserTransactions(
-  userId: string
-): Promise<{ data: Transaction[]; isCloud: boolean; error: string | null }> {
-  const client = getSupabase();
-  if (!client) {
-    return { data: [], isCloud: false, error: 'Supabase client is not initialized.' };
-  }
-
-  // Resolve current authenticated user ID
-  let currentAuthUserId = userId;
-  try {
-    const { data: authData } = await client.auth.getUser();
-    if (authData?.user?.id) {
-      currentAuthUserId = authData.user.id;
-    }
-  } catch (e) {
-    console.warn('Error checking auth user in syncFetchUserTransactions:', e);
-  }
-
-  const effectiveUserId = currentAuthUserId || (userId && userId.trim() ? userId.trim() : 'demo-user');
-  const filterIds = Array.from(new Set([effectiveUserId, userId, 'demo-user'].filter(Boolean)));
-
-  try {
-    let query = client.from('user_transactions').select('*');
-    if (filterIds.length === 1) {
-      query = query.eq('user_id', filterIds[0]);
-    } else {
-      query = query.in('user_id', filterIds);
-    }
-    query = query.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('[Supabase Error] syncFetchUserTransactions:', error.message);
-      return { data: [], isCloud: false, error: error.message };
-    }
-
-    const mapped: Transaction[] = (data || [])
-      .filter((d: any) => !d.is_deleted)
-      .map((d: any) => {
-        const rawType = (d.type || 'payment').toLowerCase();
-        const type: TransactionType = rawType === 'receipt' ? 'receipt' : rawType === 'transfer' ? 'transfer' : 'payment';
-        return {
-          id: String(d.id),
-          userId: d.user_id,
-          voucherNo: d.voucher_no || `VCH-${String(d.id).slice(0, 6)}`,
-          type,
-          date: d.transaction_date || d.date || new Date().toISOString().split('T')[0],
-          time: d.time || '12:00',
-          amount: Number(d.amount || 0),
-          category: d.category || 'General',
-          paymentMethod: (d.payment_method || 'Cash') as PaymentMethod,
-          transferToMethod: d.transfer_to_method,
-          partyName: d.party_name || d.description,
-          description: d.description || d.party_name || '',
-          receiptUrl: d.receipt_url,
-          panVatNumber: d.pan_vat_number,
-          hasTaxVat: Boolean(d.has_tax_vat),
-          taxAmount: d.tax_amount ? Number(d.tax_amount) : undefined,
-          tags: Array.isArray(d.tags) ? d.tags : [],
-          createdAt: d.created_at || new Date().toISOString(),
-          updatedAt: d.updated_at || d.created_at || new Date().toISOString(),
-        };
-      });
-
-    return { data: mapped, isCloud: true, error: null };
-  } catch (err: any) {
-    console.error('[Supabase Exception] syncFetchUserTransactions:', err);
-    return { data: [], isCloud: false, error: err?.message || 'Failed to fetch transactions' };
-  }
-}
-
-export async function syncSaveUserTransaction(
-  userId: string,
-  tx: Omit<Transaction, 'id' | 'createdAt' | 'userId'> & { id?: string; createdAt?: string; userId?: string }
-): Promise<{ data: Transaction | null; error: string | null }> {
-  const client = getSupabase();
-  if (!client) {
-    return { data: null, error: 'Supabase client is not initialized.' };
-  }
-
-  // 1. Fetch current logged-in user session using supabase.auth.getUser()
-  let loggedInUserId: string | null = null;
-  try {
-    const { data: authData, error: authErr } = await client.auth.getUser();
-    if (!authErr && authData?.user?.id) {
-      loggedInUserId = authData.user.id;
-    }
-  } catch (e) {
-    console.warn('Error fetching auth user session in syncSaveUserTransaction:', e);
-  }
-
-  // 2. Ensure the inserted object explicitly includes user_id: user.id (or fall back to 'demo-user' if no user session is active)
-  const effectiveUserId = loggedInUserId || (userId && userId.trim() ? userId.trim() : 'demo-user');
-  
-  // 3. Ensure valid UUID / ID for primary key
-  const targetId = tx.id && tx.id.trim() ? tx.id.trim() : generateUUID();
-  const now = new Date().toISOString();
-  const createdAt = tx.createdAt || now;
-  const transactionDate = tx.date || now.split('T')[0];
-
-  // 4. Ensure all required fields (id, user_id, type, category, amount, payment_method, description, transaction_date) match schema
-  const payload: {
-    id: string;
-    user_id: string;
-    type: string;
-    category: string;
-    amount: number;
-    payment_method: string;
-    description: string;
-    transaction_date: string;
-    created_at?: string;
-  } = {
-    id: targetId,
-    user_id: effectiveUserId,
-    type: (tx.type || 'payment').toLowerCase(),
-    category: tx.category || 'General',
-    amount: Number(tx.amount) || 0,
-    payment_method: tx.paymentMethod || 'Cash',
-    description: tx.description || tx.partyName || tx.category || '',
-    transaction_date: transactionDate,
-    created_at: createdAt,
-  };
-
-  try {
-    let writeError: any = null;
-
-    if (tx.id) {
-      // Update existing record
-      const updateRes = await client
-        .from('user_transactions')
-        .update(payload)
-        .eq('id', targetId);
-
-      if (updateRes.error) {
-        // Fallback to upsert
-        const upsertRes = await client
-          .from('user_transactions')
-          .upsert(payload, { onConflict: 'id' });
-        writeError = upsertRes.error;
-      }
-    } else {
-      // Insert new record
-      let insertRes = await client
-        .from('user_transactions')
-        .insert(payload);
-
-      // If check constraint fails for lowercase, try uppercase
-      if (insertRes.error && (insertRes.error.message.includes('check constraint') || insertRes.error.message.includes('type'))) {
-        payload.type = (tx.type || 'PAYMENT').toUpperCase();
-        insertRes = await client
-          .from('user_transactions')
-          .insert(payload);
-      }
-
-      if (insertRes.error) {
-        // Fallback to upsert
-        const upsertRes = await client
-          .from('user_transactions')
-          .upsert(payload, { onConflict: 'id' });
-        writeError = upsertRes.error || insertRes.error;
-      }
-    }
-
-    if (writeError) {
-      console.error('[Supabase Error] user_transactions write failed:', writeError);
-      return { data: null, error: writeError.message };
-    }
-
-    const mapped: Transaction = {
-      id: targetId,
-      userId: effectiveUserId,
-      voucherNo: tx.voucherNo || `VCH-${String(targetId).slice(0, 6)}`,
-      type: (payload.type || tx.type).toLowerCase() as TransactionType,
-      date: transactionDate,
-      time: tx.time || '12:00',
-      amount: Number(payload.amount),
-      category: payload.category,
-      paymentMethod: payload.payment_method as PaymentMethod,
-      transferToMethod: tx.transferToMethod,
-      partyName: tx.partyName || tx.description,
-      description: payload.description,
-      receiptUrl: tx.receiptUrl,
-      panVatNumber: tx.panVatNumber,
-      hasTaxVat: tx.hasTaxVat,
-      taxAmount: tx.taxAmount,
-      tags: tx.tags || [],
-      createdAt,
-      updatedAt: now,
-    };
-
-    // Mirror to legacy transactions table for backward compatibility (non-blocking)
-    try {
-      await client.from('transactions').upsert({
-        id: mapped.id,
-        user_id: effectiveUserId,
-        voucher_no: mapped.voucherNo,
-        type: mapped.type,
-        date: mapped.date,
-        time: mapped.time,
-        amount: mapped.amount,
-        category: mapped.category,
-        payment_method: mapped.paymentMethod,
-        transfer_to_method: mapped.transferToMethod || null,
-        party_name: mapped.partyName || null,
-        description: mapped.description,
-        receipt_url: mapped.receiptUrl || null,
-        pan_vat_number: mapped.panVatNumber || null,
-        has_tax_vat: mapped.hasTaxVat || false,
-        tax_amount: mapped.taxAmount || null,
-        tags: mapped.tags || [],
-        is_deleted: false,
-        created_at: mapped.createdAt,
-        updated_at: mapped.updatedAt,
-      }, { onConflict: 'id' });
-    } catch {
-      // Non-blocking mirror
-    }
-
-    return { data: mapped, error: null };
-  } catch (err: any) {
-    console.error('[Supabase Exception] syncSaveUserTransaction:', err);
-    return { data: null, error: err?.message || 'Database error occurred' };
-  }
-}
-
-export async function syncDeleteUserTransaction(
-  userId: string,
-  txId: string
-): Promise<{ success: boolean; error: string | null }> {
-  const client = getSupabase();
-  if (!client) {
-    return { success: false, error: 'Supabase client is not initialized.' };
-  }
-
-  try {
-    const { error: utErr } = await client
-      .from('user_transactions')
-      .delete()
-      .eq('id', txId);
-
-    if (utErr) {
-      console.error('[Supabase Error] syncDeleteUserTransaction:', utErr);
-      return { success: false, error: utErr.message };
-    }
-
-    // Mirror delete to legacy transactions table
-    try {
-      await client.from('transactions').delete().eq('id', txId);
-    } catch {
-      // ignore
-    }
-
-    return { success: true, error: null };
-  } catch (err: any) {
-    console.error('[Supabase Exception] syncDeleteUserTransaction:', err);
-    return { success: false, error: err?.message || 'Failed to delete transaction' };
-  }
-}
-
-export async function syncClearUserTransactions(
-  userId: string
-): Promise<{ success: boolean; error: string | null }> {
-  const client = getSupabase();
-  if (!client) {
-    return { success: false, error: 'Supabase client is not initialized.' };
-  }
-
-  let currentAuthUserId = userId;
-  try {
-    const { data: authData } = await client.auth.getUser();
-    if (authData?.user?.id) {
-      currentAuthUserId = authData.user.id;
-    }
-  } catch (e) {
-    console.warn('Error in syncClearUserTransactions:', e);
-  }
-
-  const effectiveUserId = currentAuthUserId || (userId && userId.trim() ? userId.trim() : 'demo-user');
-  const filterIds = Array.from(new Set([effectiveUserId, userId, 'demo-user'].filter(Boolean)));
-
-  try {
-    const { error } = await client
-      .from('user_transactions')
-      .delete()
-      .in('user_id', filterIds);
-
-    if (error) {
-      console.error('[Supabase Error] syncClearUserTransactions:', error);
-      return { success: false, error: error.message };
-    }
-
-    try {
-      await client.from('transactions').delete().in('user_id', filterIds);
-    } catch {
-      // ignore
-    }
-
-    return { success: true, error: null };
-  } catch (err: any) {
-    console.error('[Supabase Exception] syncClearUserTransactions:', err);
-    return { success: false, error: err?.message || 'Failed to clear transactions' };
-  }
-}
-
-export interface NepseDiagnosticResult {
-  tableExists: boolean;
-  canRead: boolean;
-  canWrite: boolean;
-  isConfigured: boolean;
-  userSession: {
-    authenticated: boolean;
-    userId: string | null;
-    email: string | null;
-    role: string | null;
-  };
-  errors: {
-    connection?: string;
-    read?: string;
-    write?: string;
-  };
-  recommendations: string[];
-}
-
-/**
- * Diagnostic utility function to verify if 'nepse_transactions' table exists
- * in the Supabase schema and if the current user session has valid RLS access rights.
- * Logs structured results to the browser console.
- */
-export async function diagnoseNepseTransactionsTable(): Promise<NepseDiagnosticResult> {
-  console.group('🔍 [Supabase Diagnostic] Checking nepse_transactions Table & RLS Permissions');
-
-  const config = getStoredSupabaseConfig();
-  const client = getSupabase();
-  const result: NepseDiagnosticResult = {
-    tableExists: false,
-    canRead: false,
-    canWrite: false,
-    isConfigured: config.isConfigured,
-    userSession: {
-      authenticated: false,
-      userId: null,
-      email: null,
-      role: null,
-    },
-    errors: {},
-    recommendations: [],
-  };
-
-  console.log('1️⃣ Supabase Configuration:', {
-    url: config.url ? `${config.url.substring(0, 25)}...` : 'Not Set',
-    isConfigured: config.isConfigured,
-  });
-
-  if (!config.isConfigured || !client) {
-    result.errors.connection = 'Supabase client is not configured or initialized.';
-    result.recommendations.push('Configure a valid Supabase URL and Anon Key in Settings.');
-    console.error('❌ Supabase is NOT configured properly.');
-    console.groupEnd();
-    return result;
-  }
-
-  // 2. Check Auth Session
-  try {
-    const { data: { session }, error: authErr } = await client.auth.getSession();
-    if (session?.user) {
-      result.userSession = {
-        authenticated: true,
-        userId: session.user.id,
-        email: session.user.email || null,
-        role: session.user.role || 'authenticated',
-      };
-      console.log('2️⃣ Auth Session: AUTHENTICATED ✅', result.userSession);
-    } else {
-      console.log('2️⃣ Auth Session: ANONYMOUS / GUEST ⚠️', authErr?.message || 'No active user session');
-    }
-  } catch (err: any) {
-    console.warn('⚠️ Error checking auth session:', err?.message);
-  }
-
-  // 3. Test SELECT Access & Table Existence
-  console.log('3️⃣ Checking SELECT access on table "nepse_transactions"...');
-  try {
-    const { data, error } = await client
-      .from('nepse_transactions')
-      .select('id, user_id, symbol, transaction_type, units, price, transaction_date, created_at')
-      .limit(1);
-
-    if (error) {
-      result.errors.read = `[Code ${error.code}] ${error.message}`;
-      if (error.code === '42P01' || error.message.includes('does not exist')) {
-        result.tableExists = false;
-        console.error('❌ TABLE MISSING: "nepse_transactions" table does NOT exist in Supabase schema.');
-        result.recommendations.push('Run the provided SQL script in the SQL Schema Modal to create the "nepse_transactions" table.');
-      } else if (error.code === '42501' || error.message.includes('permission') || error.message.includes('policy')) {
-        result.tableExists = true;
-        result.canRead = false;
-        console.error('❌ RLS READ DENIED: Current user session cannot SELECT from "nepse_transactions".', error.message);
-        result.recommendations.push('Update RLS policies for "nepse_transactions" table in Supabase SQL Editor.');
-      } else {
-        result.tableExists = true;
-        console.error('❌ SELECT ERROR:', error.message);
-      }
-    } else {
-      result.tableExists = true;
-      result.canRead = true;
-      console.log(`✅ SELECT SUCCESS: "nepse_transactions" exists and read access granted. Found ${data?.length || 0} sample row(s).`);
-    }
-  } catch (err: any) {
-    result.errors.read = err?.message || 'Unknown read exception';
-    console.error('❌ SELECT Exception:', err);
-  }
-
-  // 4. Test WRITE / INSERT Access (Dry-run test row)
-  if (result.tableExists) {
-    console.log('4️⃣ Testing WRITE (INSERT & DELETE) RLS access on "nepse_transactions"...');
-    const testUserId = result.userSession.userId || 'demo-user';
-    const testUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '00000000-0000-4000-8000-000000000000';
-
-    try {
-      const { data: insertData, error: insertErr } = await client
-        .from('nepse_transactions')
-        .insert({
-          id: testUuid,
-          user_id: testUserId,
-          symbol: 'DIAG_TEST',
-          transaction_type: 'BUY',
-          units: 1,
-          price: 100,
-          transaction_date: new Date().toISOString().split('T')[0],
-        })
-        .select()
-        .single();
-
-      if (insertErr) {
-        result.canWrite = false;
-        result.errors.write = `[Code ${insertErr.code}] ${insertErr.message}`;
-        console.error('❌ WRITE DENIED: Could not insert test record into "nepse_transactions".', insertErr.message);
-        if (insertErr.code === '42501' || insertErr.message.includes('policy')) {
-          result.recommendations.push('Add an INSERT policy to "nepse_transactions" allowing "auth.uid()::text = user_id OR user_id = \'demo-user\' OR public.is_admin()".');
-        } else if (insertErr.message.includes('foreign key')) {
-          result.recommendations.push('Ensure user_id column type is TEXT rather than UUID with rigid foreign key constraints to support guest/demo users.');
-        }
-      } else {
-        result.canWrite = true;
-        console.log('✅ WRITE SUCCESS: Inserted diagnostic test row into "nepse_transactions".', insertData);
-
-        // Clean up test row
-        const { error: deleteErr } = await client
-          .from('nepse_transactions')
-          .delete()
-          .eq('id', testUuid);
-
-        if (deleteErr) {
-          console.warn('⚠️ Diagnostic cleanup note: Test row was created but delete failed:', deleteErr.message);
-        } else {
-          console.log('🧹 Cleanup: Test diagnostic row removed successfully.');
-        }
-      }
-    } catch (err: any) {
-      result.canWrite = false;
-      result.errors.write = err?.message || 'Unknown write exception';
-      console.error('❌ WRITE Exception:', err);
-    }
-  }
-
-  // 5. Final Diagnostic Summary Table
-  console.table({
-    'Table Exists': result.tableExists ? '✅ Yes' : '❌ No',
-    'SELECT (Read RLS)': result.canRead ? '✅ Granted' : '❌ Denied / Failed',
-    'INSERT (Write RLS)': result.canWrite ? '✅ Granted' : '❌ Denied / Failed',
-    'User Session': result.userSession.authenticated ? `Auth (${result.userSession.email})` : 'Anonymous / Guest',
-  });
-
-  if (result.recommendations.length > 0) {
-    console.group('🛠️ Actionable Recommendations:');
-    result.recommendations.forEach((rec, idx) => console.log(`${idx + 1}. ${rec}`));
-    console.groupEnd();
-  } else {
-    console.log('🎉 "nepse_transactions" table and RLS permissions are fully operational!');
-  }
-
-  console.groupEnd();
-
-  return result;
-}
-
-// Bind to window for direct browser console execution e.g. window.diagnoseNepseTransactionsTable()
-if (typeof window !== 'undefined') {
-  (window as any).diagnoseNepseTransactionsTable = diagnoseNepseTransactionsTable;
-}
-
-// -----------------------------------------------------------------------------
 // Unified SQL Schema & RLS Policies
 // -----------------------------------------------------------------------------
 
@@ -3416,41 +2250,7 @@ CREATE POLICY "Todos update policy" ON public.todos FOR UPDATE
 CREATE POLICY "Todos delete policy" ON public.todos FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
--- 4. WORK_LOGS TABLE
-CREATE TABLE IF NOT EXISTS public.work_logs (
-    id TEXT PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    project_name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    duration_minutes INTEGER DEFAULT 0,
-    hours_spent NUMERIC DEFAULT 0,
-    log_date TEXT NOT NULL,
-    date TEXT,
-    start_time TEXT,
-    end_time TEXT,
-    category TEXT DEFAULT 'General',
-    notify_at TIMESTAMPTZ,
-    notified BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
-ALTER TABLE public.work_logs ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "WorkLogs select policy" ON public.work_logs;
-DROP POLICY IF EXISTS "WorkLogs insert policy" ON public.work_logs;
-DROP POLICY IF EXISTS "WorkLogs update policy" ON public.work_logs;
-DROP POLICY IF EXISTS "WorkLogs delete policy" ON public.work_logs;
-
-CREATE POLICY "WorkLogs select policy" ON public.work_logs FOR SELECT
-    USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "WorkLogs insert policy" ON public.work_logs FOR INSERT
-    WITH CHECK (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "WorkLogs update policy" ON public.work_logs FOR UPDATE
-    USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "WorkLogs delete policy" ON public.work_logs FOR DELETE
-    USING (auth.uid() = user_id OR public.is_admin());
-
--- 5. FOLDERS & FILES TABLES
+-- 4. FOLDERS & FILES TABLES
 CREATE TABLE IF NOT EXISTS public.folders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -3504,76 +2304,49 @@ CREATE POLICY "Files update policy" ON public.files FOR UPDATE
 CREATE POLICY "Files delete policy" ON public.files FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());
 
--- 6. SHARE MARKET TABLES
-CREATE TABLE IF NOT EXISTS public.share_portfolio (
+-- 5. USER TRANSACTIONS TABLE (Accounting Module)
+CREATE TABLE IF NOT EXISTS public.user_transactions (
     id TEXT PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    symbol TEXT NOT NULL,
-    units INTEGER NOT NULL,
-    buy_price NUMERIC NOT NULL,
-    purchase_date TEXT NOT NULL,
-    wacc NUMERIC NOT NULL,
-    total_dividends NUMERIC DEFAULT 0,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('RECEIPT', 'PAYMENT', 'TRANSFER')),
+    category TEXT DEFAULT 'General',
+    amount NUMERIC DEFAULT 0,
+    payment_method TEXT DEFAULT 'Cash',
+    description TEXT DEFAULT '',
+    transaction_date DATE DEFAULT CURRENT_DATE,
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
-ALTER TABLE public.share_portfolio ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_transactions ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Portfolio select policy" ON public.share_portfolio;
-DROP POLICY IF EXISTS "Portfolio insert policy" ON public.share_portfolio;
-DROP POLICY IF EXISTS "Portfolio update policy" ON public.share_portfolio;
-DROP POLICY IF EXISTS "Portfolio delete policy" ON public.share_portfolio;
+DROP POLICY IF EXISTS "User transactions select policy" ON public.user_transactions;
+DROP POLICY IF EXISTS "User transactions insert policy" ON public.user_transactions;
+DROP POLICY IF EXISTS "User transactions update policy" ON public.user_transactions;
+DROP POLICY IF EXISTS "User transactions delete policy" ON public.user_transactions;
 
-CREATE POLICY "Portfolio select policy" ON public.share_portfolio FOR SELECT USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Portfolio insert policy" ON public.share_portfolio FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Portfolio update policy" ON public.share_portfolio FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Portfolio delete policy" ON public.share_portfolio FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "User transactions select policy" ON public.user_transactions FOR SELECT
+    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "User transactions insert policy" ON public.user_transactions FOR INSERT
+    WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "User transactions update policy" ON public.user_transactions FOR UPDATE
+    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "User transactions delete policy" ON public.user_transactions FOR DELETE
+    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
 
-CREATE TABLE IF NOT EXISTS public.share_trades (
-    id TEXT PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    symbol TEXT NOT NULL,
-    action TEXT NOT NULL CHECK (action IN ('BUY', 'SELL')),
-    units INTEGER NOT NULL,
-    price NUMERIC NOT NULL,
-    trade_date TEXT NOT NULL,
-    strategy TEXT,
-    psychology_notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'user_transactions'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.user_transactions;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        NULL;
+END $$;
 
-ALTER TABLE public.share_trades ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Trades select policy" ON public.share_trades;
-DROP POLICY IF EXISTS "Trades insert policy" ON public.share_trades;
-DROP POLICY IF EXISTS "Trades update policy" ON public.share_trades;
-DROP POLICY IF EXISTS "Trades delete policy" ON public.share_trades;
-
-CREATE POLICY "Trades select policy" ON public.share_trades FOR SELECT USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Trades insert policy" ON public.share_trades FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Trades update policy" ON public.share_trades FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Trades delete policy" ON public.share_trades FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
-
-CREATE TABLE IF NOT EXISTS public.share_watchlist (
-    id TEXT PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    symbol TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
-ALTER TABLE public.share_watchlist ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Watchlist select policy" ON public.share_watchlist;
-DROP POLICY IF EXISTS "Watchlist insert policy" ON public.share_watchlist;
-DROP POLICY IF EXISTS "Watchlist update policy" ON public.share_watchlist;
-DROP POLICY IF EXISTS "Watchlist delete policy" ON public.share_watchlist;
-
-CREATE POLICY "Watchlist select policy" ON public.share_watchlist FOR SELECT USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Watchlist insert policy" ON public.share_watchlist FOR INSERT WITH CHECK (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Watchlist update policy" ON public.share_watchlist FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "Watchlist delete policy" ON public.share_watchlist FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
-
--- 7. STORAGE BUCKETS (Avatars & User Files)
+-- 6. STORAGE BUCKETS (Avatars & User Files)
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('avatars', 'avatars', true)
 ON CONFLICT (id) DO NOTHING;
@@ -3582,7 +2355,7 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('user_files', 'user_files', true)
 ON CONFLICT (id) DO NOTHING;
 
--- Storage Policies for Avatars
+-- Storage Policies for Avatars & User Files
 DROP POLICY IF EXISTS "Avatar Public Access" ON storage.objects;
 DROP POLICY IF EXISTS "Avatar User Insert" ON storage.objects;
 DROP POLICY IF EXISTS "Avatar User Update" ON storage.objects;
@@ -3593,208 +2366,7 @@ CREATE POLICY "Avatar User Insert" ON storage.objects FOR INSERT WITH CHECK ((bu
 CREATE POLICY "Avatar User Update" ON storage.objects FOR UPDATE USING ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
 CREATE POLICY "Avatar User Delete" ON storage.objects FOR DELETE USING ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
 
--- 8. CHAT MESSAGES TABLE (Real-time Team & 1-on-1 Chat)
-CREATE TABLE IF NOT EXISTS public.chat_messages (
-    id TEXT PRIMARY KEY,
-    sender_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    sender_name TEXT NOT NULL,
-    sender_email TEXT NOT NULL,
-    sender_avatar TEXT,
-    sender_role TEXT DEFAULT 'user',
-    receiver_id TEXT DEFAULT 'general',
-    content TEXT NOT NULL,
-    attachment_url TEXT,
-    attachment_name TEXT,
-    attachment_type TEXT,
-    reply_to_id TEXT,
-    reply_to_snippet TEXT,
-    reply_to_sender TEXT,
-    reactions JSONB DEFAULT '[]'::jsonb,
-    is_deleted BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_chat_receiver ON public.chat_messages(receiver_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_chat_sender ON public.chat_messages(sender_id, created_at);
-
-ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Chat select policy" ON public.chat_messages;
-DROP POLICY IF EXISTS "Chat insert policy" ON public.chat_messages;
-DROP POLICY IF EXISTS "Chat update policy" ON public.chat_messages;
-DROP POLICY IF EXISTS "Chat delete policy" ON public.chat_messages;
-
-CREATE POLICY "Chat select policy" ON public.chat_messages FOR SELECT 
-USING (
-    receiver_id = 'general' OR 
-    receiver_id IS NULL OR 
-    sender_id = auth.uid() OR 
-    receiver_id = auth.uid()::text OR 
-    public.is_admin()
-);
-
-CREATE POLICY "Chat insert policy" ON public.chat_messages FOR INSERT 
-WITH CHECK (
-    auth.uid() IS NOT NULL AND sender_id = auth.uid()
-);
-
-CREATE POLICY "Chat update policy" ON public.chat_messages FOR UPDATE 
-USING (
-    sender_id = auth.uid() OR public.is_admin()
-);
-
-CREATE POLICY "Chat delete policy" ON public.chat_messages FOR DELETE 
-USING (
-    sender_id = auth.uid() OR public.is_admin()
-);
-
--- 9. USER TRANSACTIONS TABLE (Accounting, Income & Expenses)
-CREATE TABLE IF NOT EXISTS public.user_transactions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('RECEIPT', 'PAYMENT', 'receipt', 'payment', 'transfer', 'TRANSFER')),
-    category TEXT DEFAULT 'General',
-    amount NUMERIC NOT NULL DEFAULT 0,
-    payment_method TEXT NOT NULL DEFAULT 'Cash',
-    description TEXT DEFAULT '',
-    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_tx_user_date ON public.user_transactions(user_id, transaction_date);
-
-ALTER TABLE public.user_transactions ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "user_transactions_select" ON public.user_transactions;
-DROP POLICY IF EXISTS "user_transactions_insert" ON public.user_transactions;
-DROP POLICY IF EXISTS "user_transactions_update" ON public.user_transactions;
-DROP POLICY IF EXISTS "user_transactions_delete" ON public.user_transactions;
-
-CREATE POLICY "user_transactions_select" ON public.user_transactions FOR SELECT USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "user_transactions_insert" ON public.user_transactions FOR INSERT WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "user_transactions_update" ON public.user_transactions FOR UPDATE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "user_transactions_delete" ON public.user_transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-
-ALTER PUBLICATION supabase_realtime ADD TABLE public.user_transactions;
-
--- 9B. TRANSACTIONS TABLE (Accounting Daybook, Expense & Income Tracker)
-CREATE TABLE IF NOT EXISTS public.transactions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    voucher_no TEXT,
-    type TEXT NOT NULL CHECK (type IN ('receipt', 'payment', 'transfer')),
-    date TEXT NOT NULL,
-    time TEXT,
-    amount NUMERIC NOT NULL DEFAULT 0,
-    category TEXT DEFAULT 'General',
-    payment_method TEXT NOT NULL,
-    transfer_to_method TEXT,
-    party_name TEXT,
-    description TEXT DEFAULT '',
-    receipt_url TEXT,
-    pan_vat_number TEXT,
-    has_tax_vat BOOLEAN DEFAULT FALSE,
-    tax_amount NUMERIC,
-    tags TEXT[] DEFAULT '{}',
-    is_deleted BOOLEAN DEFAULT FALSE,
-    deleted_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
--- Ensure migration for existing transactions user_id column
-DO $$
-BEGIN
-    ALTER TABLE public.transactions ALTER COLUMN user_id TYPE TEXT USING user_id::text;
-EXCEPTION
-    WHEN OTHERS THEN
-        NULL;
-END $$;
-
-CREATE INDEX IF NOT EXISTS idx_tx_user_date ON public.transactions(user_id, date);
-
-ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Transactions select policy" ON public.transactions;
-DROP POLICY IF EXISTS "Transactions insert policy" ON public.transactions;
-DROP POLICY IF EXISTS "Transactions update policy" ON public.transactions;
-DROP POLICY IF EXISTS "Transactions delete policy" ON public.transactions;
-
-CREATE POLICY "Transactions select policy" ON public.transactions FOR SELECT 
-    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-
-CREATE POLICY "Transactions insert policy" ON public.transactions FOR INSERT 
-    WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-
-CREATE POLICY "Transactions update policy" ON public.transactions FOR UPDATE 
-    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-
-CREATE POLICY "Transactions delete policy" ON public.transactions FOR DELETE 
-    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-
--- Enable Realtime for nepse_transactions, transactions & chat messages
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'nepse_transactions'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.nepse_transactions;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'transactions'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.transactions;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'chat_messages'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;
-    END IF;
-EXCEPTION
-    WHEN OTHERS THEN
-        NULL;
-END $$;
-
--- 10. NEPSE TRANSACTIONS TABLE (Share Market Trade Log)
-CREATE TABLE IF NOT EXISTS public.nepse_transactions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    symbol TEXT NOT NULL,
-    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('BUY', 'SELL')),
-    units NUMERIC NOT NULL DEFAULT 0,
-    price NUMERIC NOT NULL DEFAULT 0,
-    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_nepse_tx_user_date ON public.nepse_transactions(user_id, transaction_date);
-
-ALTER TABLE public.nepse_transactions ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Nepse transactions select policy" ON public.nepse_transactions;
-DROP POLICY IF EXISTS "Nepse transactions insert policy" ON public.nepse_transactions;
-DROP POLICY IF EXISTS "Nepse transactions update policy" ON public.nepse_transactions;
-DROP POLICY IF EXISTS "Nepse transactions delete policy" ON public.nepse_transactions;
-
-CREATE POLICY "Nepse transactions select policy" ON public.nepse_transactions FOR SELECT 
-    USING (auth.uid() = user_id OR public.is_admin());
-
-CREATE POLICY "Nepse transactions insert policy" ON public.nepse_transactions FOR INSERT 
-    WITH CHECK (auth.uid() = user_id OR public.is_admin());
-
-CREATE POLICY "Nepse transactions update policy" ON public.nepse_transactions FOR UPDATE 
-    USING (auth.uid() = user_id OR public.is_admin());
-
-CREATE POLICY "Nepse transactions delete policy" ON public.nepse_transactions FOR DELETE 
-    USING (auth.uid() = user_id OR public.is_admin());
-
--- 11. Ensure default admin role
+-- 6. Ensure default admin role
 UPDATE public.profiles
 SET role = 'admin', updated_at = NOW()
 WHERE email = 'manastraderstkp@gmail.com';

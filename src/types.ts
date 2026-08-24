@@ -1,9 +1,23 @@
-export type NavSection = 'dashboard' | 'notes' | 'todos' | 'worklogs' | 'files' | 'sharemarket' | 'transactions' | 'chat' | 'trash' | 'account';
+export type NavSection = 'dashboard' | 'notes' | 'todos' | 'files' | 'transactions' | 'trash' | 'account';
 
 export type UserRole = 'admin' | 'user';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';
 export type TaskPriority = 'high' | 'medium' | 'low';
+
+export type TransactionType = 'RECEIPT' | 'PAYMENT' | 'TRANSFER';
+
+export interface UserTransaction {
+  id: string;
+  userId: string;
+  type: TransactionType;
+  category: string;
+  amount: number;
+  paymentMethod: string;
+  description?: string;
+  transactionDate: string; // YYYY-MM-DD
+  createdAt?: string;
+}
 
 export type SoundProfile = 'chime' | 'pulse' | 'fanfare' | 'marimba';
 
@@ -87,20 +101,6 @@ export interface TodoTask {
   deletedAt?: string;
 }
 
-export interface WorkLog {
-  id: string;
-  projectName: string;
-  taskDescription: string;
-  hoursSpent: number; // in decimal hours e.g. 2.5
-  date: string; // YYYY-MM-DD
-  startTime?: string; // e.g. "09:30 AM"
-  endTime?: string; // e.g. "12:00 PM"
-  category: string;
-  createdAt: string;
-  isDeleted?: boolean;
-  deletedAt?: string;
-}
-
 export interface Folder {
   id: string;
   userId: string;
@@ -131,48 +131,11 @@ export interface MetricStats {
   pendingTasks: number;
   inProgressTasks: number;
   completedTasks: number;
-  hoursLoggedToday: number;
-  totalHoursWeek: number;
   totalFolders?: number;
   totalFiles?: number;
 }
 
-export interface StockHoldings {
-  id: string;
-  symbol: string;
-  units: number;
-  buyPrice: number;
-  purchaseDate: string;
-  wacc: number;
-  totalDividends: number;
-  createdAt: string;
-}
-
-export interface TradeLog {
-  id: string;
-  symbol: string;
-  action: 'BUY' | 'SELL';
-  units: number;
-  price: number;
-  tradeDate: string;
-  strategy: string;
-  psychologyNotes: string;
-  createdAt: string;
-}
-
-export interface WatchlistStock {
-  id: string;
-  symbol: string;
-  createdAt: string;
-}
-
-export interface ShareMarketState {
-  portfolio: StockHoldings[];
-  trades: TradeLog[];
-  watchlist: string[];
-}
-
-export type TrashItemType = 'note' | 'todo' | 'worklog' | 'file' | 'folder' | 'transaction';
+export type TrashItemType = 'note' | 'todo' | 'file' | 'folder';
 
 export interface TrashItem {
   id: string;
@@ -181,86 +144,5 @@ export interface TrashItem {
   title: string; // Used for display in the trash list
   deletedAt: string;
   data: any; // The original serialized object
-}
-
-export type TransactionType = 'payment' | 'receipt' | 'transfer';
-export type PaymentMethod = 'Cash' | 'Bank Transfer' | 'eSewa' | 'Khalti' | 'ConnectIPS' | 'Cheque' | 'Credit Card' | 'Other';
-
-export interface Transaction {
-  id: string;
-  userId: string;
-  voucherNo: string; // e.g. RCP-001, PYM-001, TRF-001
-  type: TransactionType; // payment = expense, receipt = income, transfer = contra
-  date: string; // YYYY-MM-DD
-  time?: string; // HH:mm
-  amount: number;
-  category: string; // e.g. "Office Rent", "Food & Tea", "Sales", "Utilities", etc.
-  paymentMethod: PaymentMethod;
-  transferToMethod?: PaymentMethod; // When type === 'transfer'
-  partyName?: string; // Customer, Vendor, Employee, Payee or Payer
-  description: string;
-  receiptUrl?: string; // Attachment / Bill preview URL
-  panVatNumber?: string;
-  hasTaxVat?: boolean;
-  taxAmount?: number;
-  tags?: string[];
-  isRecurring?: boolean;
-  createdAt: string;
-  updatedAt?: string;
-  isDeleted?: boolean;
-  deletedAt?: string;
-}
-
-export interface AccountingSummary {
-  totalReceipts: number;
-  totalPayments: number;
-  netBalance: number;
-  todayReceipts: number;
-  todayPayments: number;
-  thisMonthReceipts: number;
-  thisMonthPayments: number;
-  cashBalance: number;
-  bankBalance: number;
-  digitalWalletBalance: number;
-  transactionCount: number;
-}
-
-export interface MessageReaction {
-  emoji: string;
-  count: number;
-  userIds: string[];
-}
-
-export interface ChatMessage {
-  id: string;
-  senderId: string;
-  senderName: string;
-  senderEmail: string;
-  senderAvatar?: string;
-  senderRole?: UserRole;
-  receiverId?: string | null; // 'general' or null for public team chat, or target user ID for 1-on-1 private chat
-  content: string;
-  attachmentUrl?: string;
-  attachmentName?: string;
-  attachmentType?: 'image' | 'file';
-  replyToId?: string | null;
-  replyToSnippet?: string | null;
-  replyToSender?: string | null;
-  reactions?: MessageReaction[];
-  createdAt: string;
-  updatedAt?: string;
-  isDeleted?: boolean;
-}
-
-export interface ChatUser {
-  id: string;
-  email: string;
-  fullName: string;
-  phoneNumber?: string;
-  avatarUrl?: string;
-  role: UserRole;
-  isOnline?: boolean;
-  lastSeen?: string;
-  unreadCount?: number;
 }
 

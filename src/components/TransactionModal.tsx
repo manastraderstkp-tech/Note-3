@@ -1,534 +1,340 @@
 import React, { useState, useEffect } from 'react';
-import {
-  X,
-  ArrowDownLeft,
-  ArrowUpRight,
-  ArrowLeftRight,
-  Calendar,
-  Check,
-  AlertCircle,
-  Loader2,
-  ChevronDown,
-  Upload
-} from 'lucide-react';
-import { Transaction, TransactionType, PaymentMethod } from '../types';
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, PAYMENT_METHODS, formatCurrencyNPR } from '../lib/transactionDb';
+import { X, DollarSign, Calendar, Tag, CreditCard, FileText, ArrowUpRight, ArrowDownLeft, RefreshCw } from 'lucide-react';
+import { UserTransaction, TransactionType } from '../types';
 
 interface TransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (
-    tx: Omit<Transaction, 'id' | 'createdAt' | 'userId'>,
-    id?: string
-  ) => Promise<{ success: boolean; error?: string }>;
-  initialTransaction?: Transaction | null;
+  onSave: (tx: UserTransaction) => Promise<void>;
+  initialTransaction?: UserTransaction | null;
   defaultType?: TransactionType;
+  userId: string;
 }
+
+const INCOME_CATEGORIES = ['Sales', 'Salary', 'Investment Returns', 'Freelance', 'Consulting', 'Refund', 'Other Income'];
+const EXPENSE_CATEGORIES = ['Rent', 'Utilities', 'Grocery', 'Food & Snacks', 'Transport', 'Supplies', 'Marketing', 'Salary Paid', 'Software', 'Other Expense'];
+const TRANSFER_CATEGORIES = ['Bank Transfer', 'ATM Withdrawal', 'Internal Transfer', 'Owner Draw', 'Other Transfer'];
+
+const PAYMENT_METHODS = ['Cash', 'eSewa', 'Khalti', 'Bank Transfer', 'Debit / Credit Card', 'Mobile Banking', 'Other'];
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
   isOpen,
   onClose,
   onSave,
   initialTransaction,
-  defaultType = 'payment',
+  defaultType = 'RECEIPT',
+  userId,
 }) => {
   const [type, setType] = useState<TransactionType>(defaultType);
   const [amount, setAmount] = useState<string>('');
-  const [category, setCategory] = useState('');
-  const [isCustomCategory, setIsCustomCategory] = useState(false);
-  const [customCategoryInput, setCustomCategoryInput] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Cash');
-  const [transferToMethod, setTransferToMethod] = useState<PaymentMethod>('Bank Transfer');
-  const [description, setDescription] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
-  
-  // Optional extra details (collapsed by default)
-  const [showMoreDetails, setShowMoreDetails] = useState(false);
-  const [voucherNo, setVoucherNo] = useState('');
-  const [receiptUrl, setReceiptUrl] = useState('');
-  
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [category, setCategory] = useState<string>('Sales');
+  const [customCategory, setCustomCategory] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<string>('Cash');
+  const [description, setDescription] = useState<string>('');
+  const [transactionDate, setTransactionDate] = useState<string>(
+    new Date().toISOString().split('T')[0]
+  );
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      if (initialTransaction) {
-        setType(initialTransaction.type);
-        setAmount(String(initialTransaction.amount || ''));
-        setCategory(initialTransaction.category || '');
-        setPaymentMethod(initialTransaction.paymentMethod || 'Cash');
-        setTransferToMethod(initialTransaction.transferToMethod || 'Bank Transfer');
-        setDescription(initialTransaction.description || initialTransaction.partyName || '');
-        setDate(initialTransaction.date || new Date().toISOString().split('T')[0]);
-        setVoucherNo(initialTransaction.voucherNo || '');
-        setReceiptUrl(initialTransaction.receiptUrl || '');
-        setShowMoreDetails(!!initialTransaction.receiptUrl || !!initialTransaction.voucherNo);
-        setErrorMessage(null);
+    if (initialTransaction) {
+      setType(initialTransaction.type);
+      setAmount(initialTransaction.amount.toString());
+      const catList = initialTransaction.type === 'RECEIPT' ? INCOME_CATEGORIES : initialTransaction.type === 'PAYMENT' ? EXPENSE_CATEGORIES : TRANSFER_CATEGORIES;
+      if (catList.includes(initialTransaction.category)) {
+        setCategory(initialTransaction.category);
+        setCustomCategory('');
       } else {
-        setType(defaultType);
-        setAmount('');
-        if (defaultType === 'payment') {
-          setCategory(EXPENSE_CATEGORIES[0].name);
-        } else if (defaultType === 'receipt') {
-          setCategory(INCOME_CATEGORIES[0].name);
-        } else {
-          setCategory('Contra / Transfer');
-        }
-        setPaymentMethod('Cash');
-        setTransferToMethod('Bank Transfer');
-        setDescription('');
-        setDate(new Date().toISOString().split('T')[0]);
-        const prefix = defaultType === 'receipt' ? 'RCP' : defaultType === 'payment' ? 'EXP' : 'TRF';
-        setVoucherNo(`${prefix}-${Math.floor(100 + Math.random() * 900)}`);
-        setReceiptUrl('');
-        setShowMoreDetails(false);
-        setErrorMessage(null);
+        setCategory('__custom__');
+        setCustomCategory(initialTransaction.category);
       }
+      setPaymentMethod(initialTransaction.paymentMethod || 'Cash');
+      setDescription(initialTransaction.description || '');
+      setTransactionDate(initialTransaction.transactionDate || new Date().toISOString().split('T')[0]);
+    } else {
+      setType(defaultType);
+      setAmount('');
+      setCategory(defaultType === 'RECEIPT' ? 'Sales' : defaultType === 'PAYMENT' ? 'Rent' : 'Bank Transfer');
+      setCustomCategory('');
+      setPaymentMethod('Cash');
+      setDescription('');
+      setTransactionDate(new Date().toISOString().split('T')[0]);
     }
+    setErrorMsg(null);
   }, [isOpen, initialTransaction, defaultType]);
-
-  if (!isOpen) return null;
 
   const handleTypeChange = (newType: TransactionType) => {
     setType(newType);
-    const prefix = newType === 'receipt' ? 'RCP' : newType === 'payment' ? 'EXP' : 'TRF';
-    setVoucherNo(`${prefix}-${Math.floor(100 + Math.random() * 900)}`);
-    if (newType === 'payment') {
-      setCategory(EXPENSE_CATEGORIES[0].name);
-    } else if (newType === 'receipt') {
-      setCategory(INCOME_CATEGORIES[0].name);
+    if (newType === 'RECEIPT') {
+      setCategory('Sales');
+    } else if (newType === 'PAYMENT') {
+      setCategory('Rent');
     } else {
-      setCategory('Contra / Transfer');
+      setCategory('Bank Transfer');
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      setErrorMessage('Receipt photo must be under 5MB.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setReceiptUrl(event.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-  };
+  if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const numAmount = parseFloat(amount);
-
-    if (isNaN(numAmount) || numAmount <= 0) {
-      setErrorMessage('कृपया मान्य रकम (Amount) प्रविष्ट गर्नुहोस्।');
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      setErrorMsg('Please enter a valid positive amount.');
       return;
     }
 
-    if (!category.trim() && type !== 'transfer') {
-      setErrorMessage('कृपया खर्च वा आम्दानीको शीर्षक छान्नुहोस्।');
-      return;
-    }
+    const finalCategory = category === '__custom__' ? (customCategory.trim() || 'General') : category;
 
-    setErrorMessage(null);
     setIsSubmitting(true);
+    setErrorMsg(null);
 
     try {
-      const now = new Date();
-      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-      const payload: Omit<Transaction, 'id' | 'createdAt' | 'userId'> = {
-        voucherNo: voucherNo.trim() || `${type.toUpperCase()}-${Date.now().toString().slice(-4)}`,
-        type,
-        date,
-        time: timeStr,
-        amount: numAmount,
-        category: type === 'transfer' ? 'Contra / Transfer' : category.trim(),
-        paymentMethod,
-        transferToMethod: type === 'transfer' ? transferToMethod : undefined,
-        partyName: description.trim() || undefined,
-        description: description.trim() || (type === 'payment' ? category : type === 'receipt' ? category : 'Account Transfer'),
-        receiptUrl: receiptUrl || undefined,
+      const tx: UserTransaction = {
+        id: initialTransaction ? initialTransaction.id : `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        userId: userId,
+        type: type,
+        category: finalCategory,
+        amount: numericAmount,
+        paymentMethod: paymentMethod,
+        description: description.trim(),
+        transactionDate: transactionDate,
+        createdAt: initialTransaction?.createdAt || new Date().toISOString(),
       };
 
-      const res = await onSave(payload, initialTransaction ? initialTransaction.id : undefined);
-      if (res && !res.success) {
-        setErrorMessage(res.error || 'Failed to save transaction.');
-        setIsSubmitting(false);
-        return;
-      }
+      await onSave(tx);
       setIsSubmitting(false);
       onClose();
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Error occurred while saving.');
       setIsSubmitting(false);
+      setErrorMsg(err?.message || 'Failed to save transaction');
     }
   };
 
-  const categories = type === 'receipt' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const currentCategories = type === 'RECEIPT' ? INCOME_CATEGORIES : type === 'PAYMENT' ? EXPENSE_CATEGORIES : TRANSFER_CATEGORIES;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-150">
-      <div className="relative flex flex-col w-full max-w-lg rounded-3xl border border-slate-200 bg-white shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
-        
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-fadeIn">
+      <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-6 py-4">
           <div className="flex items-center gap-2.5">
-            <div
-              className={`flex h-9 w-9 items-center justify-center rounded-xl ${
-                type === 'receipt'
-                  ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400'
-                  : type === 'payment'
-                  ? 'bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400'
-                  : 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400'
-              }`}
-            >
-              {type === 'receipt' ? (
-                <ArrowDownLeft className="h-5 w-5" />
-              ) : type === 'payment' ? (
-                <ArrowUpRight className="h-5 w-5" />
-              ) : (
-                <ArrowLeftRight className="h-5 w-5" />
-              )}
+            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+              type === 'RECEIPT' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400' :
+              type === 'PAYMENT' ? 'bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400' :
+              'bg-blue-100 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+            }`}>
+              {type === 'RECEIPT' ? <ArrowDownLeft className="h-5 w-5" /> : type === 'PAYMENT' ? <ArrowUpRight className="h-5 w-5" /> : <RefreshCw className="h-5 w-5" />}
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                {initialTransaction
-                  ? 'Edit Transaction (कारोबार सम्पादन)'
-                  : type === 'payment'
-                  ? 'Record Expense (खर्च दर्ता)'
-                  : type === 'receipt'
-                  ? 'Record Receipt (आम्दानी दर्ता)'
-                  : 'Account Transfer (खाता ट्रान्सफर)'}
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                {initialTransaction ? 'Edit Transaction' : 'New Transaction'}
               </h2>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {type === 'payment'
-                  ? 'दैनिक खर्च वा भुक्तानी'
-                  : type === 'receipt'
-                  ? 'प्राप्त आम्दानी वा रकम'
-                  : 'नगद वा बैंक खाता सार्नुहोस्'}
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Record income, expense or account transfer
               </p>
             </div>
           </div>
-
           <button
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Compact Form */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[85vh] overflow-y-auto">
-          {errorMessage && (
-            <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
-              <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
-              <span>{errorMessage}</span>
+        {/* Form Body */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {errorMsg && (
+            <div className="rounded-xl bg-rose-50 p-3 text-xs font-medium text-rose-600 border border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-900">
+              {errorMsg}
             </div>
           )}
 
-          {/* Clean 3-Type Toggle */}
-          <div className="grid grid-cols-3 gap-1.5 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800/80">
-            <button
-              type="button"
-              onClick={() => handleTypeChange('payment')}
-              className={`flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-bold transition ${
-                type === 'payment'
-                  ? 'bg-rose-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
-              }`}
-            >
-              <ArrowUpRight className="h-3.5 w-3.5" />
-              <span>खर्च (Expense)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleTypeChange('receipt')}
-              className={`flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-bold transition ${
-                type === 'receipt'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
-              }`}
-            >
-              <ArrowDownLeft className="h-3.5 w-3.5" />
-              <span>आम्दानी (Income)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleTypeChange('transfer')}
-              className={`flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-bold transition ${
-                type === 'transfer'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
-              }`}
-            >
-              <ArrowLeftRight className="h-3.5 w-3.5" />
-              <span>सार्नुहोस् (Transfer)</span>
-            </button>
-          </div>
-
-          {/* Focal Hero Amount Input */}
-          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                Amount (रकम रू.) <span className="text-rose-500">*</span>
-              </label>
-              {amount && parseFloat(amount) > 0 && (
-                <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
-                  {formatCurrencyNPR(parseFloat(amount))}
-                </span>
-              )}
-            </div>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-base">
-                Rs.
-              </span>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                required
-                autoFocus
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="0.00"
-                className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-11 pr-3 text-lg font-black text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
+          {/* Type Toggle Tabs */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+              Transaction Type
+            </label>
+            <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+              <button
+                type="button"
+                onClick={() => handleTypeChange('RECEIPT')}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
+                  type === 'RECEIPT'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <ArrowDownLeft className="h-3.5 w-3.5" />
+                Income
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTypeChange('PAYMENT')}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
+                  type === 'PAYMENT'
+                    ? 'bg-rose-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <ArrowUpRight className="h-3.5 w-3.5" />
+                Expense
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTypeChange('TRANSFER')}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
+                  type === 'TRANSFER'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Transfer
+              </button>
             </div>
           </div>
 
-          {/* Category & Payment Method (or From/To for Transfer) */}
-          {type !== 'transfer' ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    शीर्षक (Category) <span className="text-rose-500">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCustomCategory(!isCustomCategory);
-                      if (!isCustomCategory) {
-                        setCustomCategoryInput('');
-                      }
-                    }}
-                    className="text-[10px] font-bold text-indigo-600 hover:underline dark:text-indigo-400"
-                  >
-                    {isCustomCategory ? 'Use Preset List' : '+ Custom Category'}
-                  </button>
-                </div>
-
-                {isCustomCategory ? (
-                  <input
-                    type="text"
-                    required
-                    placeholder="Enter Custom Category e.g. Freelance, Office Rent..."
-                    value={customCategoryInput}
-                    onChange={(e) => {
-                      setCustomCategoryInput(e.target.value);
-                      setCategory(e.target.value);
-                    }}
-                    className="w-full rounded-xl border border-indigo-300 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 dark:border-indigo-700 dark:bg-slate-800 dark:text-white"
-                  />
-                ) : (
-                  <select
-                    value={category}
-                    onChange={(e) => {
-                      if (e.target.value === '__CUSTOM__') {
-                        setIsCustomCategory(true);
-                        setCustomCategoryInput('');
-                        setCategory('');
-                      } else {
-                        setCategory(e.target.value);
-                      }
-                    }}
-                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.name}>
-                        {cat.name}
-                      </option>
-                    ))}
-                    <option value="__CUSTOM__">+ Custom Category...</option>
-                  </select>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  माध्यम (Payment Mode) <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                >
-                  {PAYMENT_METHODS.map((pm) => (
-                    <option key={pm} value={pm}>
-                      {pm}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  From (कुन खाताबाट) <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                >
-                  {PAYMENT_METHODS.map((pm) => (
-                    <option key={pm} value={pm}>
-                      {pm}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  To (कुन खातामा) <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={transferToMethod}
-                  onChange={(e) => setTransferToMethod(e.target.value as PaymentMethod)}
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                >
-                  {PAYMENT_METHODS.map((pm) => (
-                    <option key={pm} value={pm}>
-                      {pm}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-
-          {/* Description & Date */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                विवरण वा कसलाई/कसबाट (Particulars)
-              </label>
-              <input
-                type="text"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={
-                  type === 'payment'
-                    ? 'उदा. चिया नास्ता, पेट्रोल, Ramesh Stationary...'
-                    : type === 'receipt'
-                    ? 'उदा. बिक्री आम्दानी, ABC Client भुक्तानी...'
-                    : 'उदा. ATM बाट नगद झिकेको...'
-                }
-                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-xs font-medium text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
-            </div>
-
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Amount */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                मिति (Date) <span className="text-rose-500">*</span>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                Amount (Rs.) *
               </label>
               <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <DollarSign className="h-4 w-4" />
+                </div>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-medium"
+                />
+              </div>
+            </div>
+
+            {/* Date */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                Date *
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Calendar className="h-4 w-4" />
+                </div>
                 <input
                   type="date"
                   required
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  value={transactionDate}
+                  onChange={(e) => setTransactionDate(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-medium"
                 />
               </div>
             </div>
           </div>
 
-          {/* Optional More Details Collapsible */}
-          <div className="pt-1">
-            <button
-              type="button"
-              onClick={() => setShowMoreDetails(!showMoreDetails)}
-              className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 transition"
-            >
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showMoreDetails ? 'rotate-180' : ''}`} />
-              <span>{showMoreDetails ? 'Hide extra details' : '+ थप विवरण / बिल फोटो (Optional)'}</span>
-            </button>
-
-            {showMoreDetails && (
-              <div className="mt-2.5 p-3 rounded-2xl border border-slate-200 bg-slate-50 space-y-3 dark:border-slate-800 dark:bg-slate-800/50 animate-in fade-in duration-150">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    भौचर / बिल नं (Bill / Voucher No)
-                  </label>
-                  <input
-                    type="text"
-                    value={voucherNo}
-                    onChange={(e) => setVoucherNo(e.target.value)}
-                    placeholder="e.g. Bill #124"
-                    className="w-full rounded-xl border border-slate-200 bg-white py-2 px-3 text-xs outline-none dark:border-slate-700 dark:bg-slate-800"
-                  />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Category */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                Category *
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Tag className="h-4 w-4" />
                 </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                    रसिद वा बिलको फोटो (Receipt Photo)
-                  </label>
-                  {receiptUrl ? (
-                    <div className="flex items-center gap-3">
-                      <img src={receiptUrl} alt="Receipt" className="h-14 w-14 rounded-lg object-cover border" />
-                      <button
-                        type="button"
-                        onClick={() => setReceiptUrl('')}
-                        className="text-xs text-rose-500 hover:underline"
-                      >
-                        हटाउनुहोस् (Remove)
-                      </button>
-                    </div>
-                  ) : (
-                    <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2 text-xs font-semibold text-slate-600 hover:border-indigo-400 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                      <Upload className="h-3.5 w-3.5 text-indigo-500" />
-                      <span>Upload Bill Image</span>
-                      <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-                    </label>
-                  )}
-                </div>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-medium appearance-none"
+                >
+                  {currentCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                  <option value="__custom__">+ Custom Category...</option>
+                </select>
               </div>
-            )}
+              {category === '__custom__' && (
+                <input
+                  type="text"
+                  required
+                  value={customCategory}
+                  onChange={(e) => setCustomCategory(e.target.value)}
+                  placeholder="Enter custom category name"
+                  className="mt-2 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                />
+              )}
+            </div>
+
+            {/* Payment Method */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                Payment Method *
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <CreditCard className="h-4 w-4" />
+                </div>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-medium appearance-none"
+                >
+                  {PAYMENT_METHODS.map((pm) => (
+                    <option key={pm} value={pm}>
+                      {pm}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+          {/* Description / Party Notes */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+              Description / Party Name (Optional)
+            </label>
+            <div className="relative">
+              <div className="absolute top-3 left-3 pointer-events-none text-slate-400">
+                <FileText className="h-4 w-4" />
+              </div>
+              <textarea
+                rows={2}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="e.g., Client payment from ABC Corp or Monthly Store Rent"
+                className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm resize-none"
+              />
+            </div>
+          </div>
+
+          {/* Footer Actions */}
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 transition dark:text-slate-300 dark:hover:bg-slate-800"
+              disabled={isSubmitting}
+              className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
-              रद्द गर्नुहोस् (Cancel)
+              Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className={`flex items-center gap-1.5 rounded-xl px-5 py-2 text-xs font-bold text-white shadow-sm transition disabled:opacity-50 active:scale-95 ${
-                type === 'receipt'
-                  ? 'bg-emerald-600 hover:bg-emerald-700'
-                  : type === 'payment'
-                  ? 'bg-rose-600 hover:bg-rose-700'
-                  : 'bg-indigo-600 hover:bg-indigo-700'
-              }`}
+              className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-600/20 transition-all flex items-center gap-2 disabled:opacity-50"
             >
-              {isSubmitting ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Check className="h-3.5 w-3.5" />
-              )}
-              <span>{initialTransaction ? 'अपडेट गर्नुहोस्' : 'दर्ता गर्नुहोस् (Save)'}</span>
+              {isSubmitting && <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+              {initialTransaction ? 'Update Transaction' : 'Save Transaction'}
             </button>
           </div>
         </form>

@@ -22,7 +22,7 @@ interface SqlSchemaModalProps {
 
 export const SqlSchemaModal: React.FC<SqlSchemaModalProps> = ({ isOpen, onClose }) => {
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<'all' | 'profiles' | 'rbac' | 'notes' | 'todos' | 'worklogs' | 'transactions' | 'nepse_transactions'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'profiles' | 'rbac' | 'notes' | 'todos'>('all');
 
   if (!isOpen) return null;
 
@@ -151,22 +151,6 @@ CREATE POLICY "Todos update policy" ON public.todos FOR UPDATE
     USING (auth.uid() = user_id OR public.is_admin())
     WITH CHECK (auth.uid() = user_id OR public.is_admin());
 CREATE POLICY "Todos delete policy" ON public.todos FOR DELETE
-    USING (auth.uid() = user_id OR public.is_admin());
-
--- WORK_LOGS POLICIES
-DROP POLICY IF EXISTS "WorkLogs select policy" ON public.work_logs;
-DROP POLICY IF EXISTS "WorkLogs insert policy" ON public.work_logs;
-DROP POLICY IF EXISTS "WorkLogs update policy" ON public.work_logs;
-DROP POLICY IF EXISTS "WorkLogs delete policy" ON public.work_logs;
-
-CREATE POLICY "WorkLogs select policy" ON public.work_logs FOR SELECT
-    USING (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "WorkLogs insert policy" ON public.work_logs FOR INSERT
-    WITH CHECK (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "WorkLogs update policy" ON public.work_logs FOR UPDATE
-    USING (auth.uid() = user_id OR public.is_admin())
-    WITH CHECK (auth.uid() = user_id OR public.is_admin());
-CREATE POLICY "WorkLogs delete policy" ON public.work_logs FOR DELETE
     USING (auth.uid() = user_id OR public.is_admin());`,
 
     notes: `-- NOTES TABLE
@@ -209,135 +193,6 @@ CREATE TABLE IF NOT EXISTS public.todos (
     category TEXT DEFAULT 'General',
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );`,
-
-    worklogs: `-- WORK_LOGS TABLE
-CREATE TABLE IF NOT EXISTS public.work_logs (
-    id TEXT PRIMARY KEY,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    project_name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    duration_minutes INTEGER DEFAULT 0,
-    log_date TEXT NOT NULL,
-    start_time TEXT,
-    end_time TEXT,
-    category TEXT DEFAULT 'General',
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);`,
-
-    user_transactions: `-- USER TRANSACTIONS TABLE (Accounting, Income & Expenses)
-CREATE TABLE IF NOT EXISTS public.user_transactions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('RECEIPT', 'PAYMENT', 'receipt', 'payment', 'transfer', 'TRANSFER')),
-    category TEXT DEFAULT 'General',
-    amount NUMERIC NOT NULL DEFAULT 0,
-    payment_method TEXT NOT NULL DEFAULT 'Cash',
-    description TEXT DEFAULT '',
-    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_tx_user_date ON public.user_transactions(user_id, transaction_date);
-
-ALTER TABLE public.user_transactions ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "user_transactions_select" ON public.user_transactions;
-DROP POLICY IF EXISTS "user_transactions_insert" ON public.user_transactions;
-DROP POLICY IF EXISTS "user_transactions_update" ON public.user_transactions;
-DROP POLICY IF EXISTS "user_transactions_delete" ON public.user_transactions;
-
-CREATE POLICY "user_transactions_select" ON public.user_transactions FOR SELECT USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "user_transactions_insert" ON public.user_transactions FOR INSERT WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "user_transactions_update" ON public.user_transactions FOR UPDATE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "user_transactions_delete" ON public.user_transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-
--- Enable Supabase Realtime Publication for user_transactions
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.user_transactions;
-  END IF;
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;`,
-
-    transactions: `-- TRANSACTIONS TABLE (Daybook, Expenses, Income)
-CREATE TABLE IF NOT EXISTS public.transactions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    voucher_no TEXT,
-    type TEXT NOT NULL CHECK (type IN ('receipt', 'payment', 'transfer')),
-    date TEXT NOT NULL,
-    time TEXT,
-    amount NUMERIC NOT NULL DEFAULT 0,
-    category TEXT DEFAULT 'General',
-    payment_method TEXT NOT NULL,
-    transfer_to_method TEXT,
-    party_name TEXT,
-    description TEXT DEFAULT '',
-    receipt_url TEXT,
-    pan_vat_number TEXT,
-    has_tax_vat BOOLEAN DEFAULT FALSE,
-    tax_amount NUMERIC,
-    tags TEXT[] DEFAULT '{}',
-    is_deleted BOOLEAN DEFAULT FALSE,
-    deleted_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
--- Ensure migration for existing user_id column
-DO $$
-BEGIN
-    ALTER TABLE public.transactions ALTER COLUMN user_id TYPE TEXT USING user_id::text;
-EXCEPTION
-    WHEN OTHERS THEN
-        NULL;
-END $$;
-
-ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Transactions select policy" ON public.transactions;
-DROP POLICY IF EXISTS "Transactions insert policy" ON public.transactions;
-DROP POLICY IF EXISTS "Transactions update policy" ON public.transactions;
-DROP POLICY IF EXISTS "Transactions delete policy" ON public.transactions;
-
-CREATE POLICY "Transactions select policy" ON public.transactions FOR SELECT USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "Transactions insert policy" ON public.transactions FOR INSERT WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "Transactions update policy" ON public.transactions FOR UPDATE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
-CREATE POLICY "Transactions delete policy" ON public.transactions FOR DELETE USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());`,
-
-    nepse_transactions: `-- NEPSE TRANSACTIONS TABLE (Share Market / Trade Log)
-CREATE TABLE IF NOT EXISTS public.nepse_transactions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-    symbol TEXT NOT NULL,
-    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('BUY', 'SELL')),
-    units NUMERIC NOT NULL DEFAULT 0,
-    price NUMERIC NOT NULL DEFAULT 0,
-    transaction_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_nepse_tx_user_date ON public.nepse_transactions(user_id, transaction_date);
-
-ALTER TABLE public.nepse_transactions ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Nepse transactions select policy" ON public.nepse_transactions;
-DROP POLICY IF EXISTS "Nepse transactions insert policy" ON public.nepse_transactions;
-DROP POLICY IF EXISTS "Nepse transactions update policy" ON public.nepse_transactions;
-DROP POLICY IF EXISTS "Nepse transactions delete policy" ON public.nepse_transactions;
-
-CREATE POLICY "Nepse transactions select policy" ON public.nepse_transactions FOR SELECT 
-    USING (auth.uid() = user_id OR public.is_admin());
-
-CREATE POLICY "Nepse transactions insert policy" ON public.nepse_transactions FOR INSERT 
-    WITH CHECK (auth.uid() = user_id OR public.is_admin());
-
-CREATE POLICY "Nepse transactions update policy" ON public.nepse_transactions FOR UPDATE 
-    USING (auth.uid() = user_id OR public.is_admin());
-
-CREATE POLICY "Nepse transactions delete policy" ON public.nepse_transactions FOR DELETE 
-    USING (auth.uid() = user_id OR public.is_admin());`,
   };
 
   const getActiveCode = () => {
@@ -439,36 +294,6 @@ CREATE POLICY "Nepse transactions delete policy" ON public.nepse_transactions FO
               }`}
             >
               todos table
-            </button>
-            <button
-              onClick={() => setActiveTab('worklogs')}
-              className={`rounded-lg px-3 py-1.5 transition ${
-                activeTab === 'worklogs'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              work_logs table
-            </button>
-            <button
-              onClick={() => setActiveTab('transactions')}
-              className={`rounded-lg px-3 py-1.5 transition ${
-                activeTab === 'transactions'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              transactions table
-            </button>
-            <button
-              onClick={() => setActiveTab('nepse_transactions')}
-              className={`rounded-lg px-3 py-1.5 transition ${
-                activeTab === 'nepse_transactions'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              nepse_transactions table
             </button>
           </div>
 

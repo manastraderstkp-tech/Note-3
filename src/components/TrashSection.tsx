@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Trash2, RotateCcw, AlertTriangle, FileText, CheckSquare, Clock, FolderOpen, File } from 'lucide-react';
+import { Trash2, RotateCcw, AlertTriangle, FileText, CheckSquare, FolderOpen, File } from 'lucide-react';
 import { TrashItem } from '../types';
 
 interface TrashSectionProps {
@@ -21,7 +21,6 @@ export const TrashSection: React.FC<TrashSectionProps> = ({
     switch (type) {
       case 'note': return <FileText className="h-5 w-5 text-amber-500" />;
       case 'todo': return <CheckSquare className="h-5 w-5 text-indigo-500" />;
-      case 'worklog': return <Clock className="h-5 w-5 text-emerald-500" />;
       case 'folder': return <FolderOpen className="h-5 w-5 text-yellow-500" />;
       case 'file': return <File className="h-5 w-5 text-sky-500" />;
       default: return <Trash2 className="h-5 w-5 text-slate-500" />;
@@ -32,7 +31,6 @@ export const TrashSection: React.FC<TrashSectionProps> = ({
     switch (type) {
       case 'note': return 'Note';
       case 'todo': return 'Task';
-      case 'worklog': return 'Work Log';
       case 'folder': return 'Folder';
       case 'file': return 'File';
       default: return 'Item';

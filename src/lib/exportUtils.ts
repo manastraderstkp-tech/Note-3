@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { TodoTask, WorkLog, Note, UserSession } from '../types';
+import { TodoTask, Note, UserSession } from '../types';
 
 /**
  * Escapes fields for CSV compliance (RFC 4180)
@@ -36,43 +36,6 @@ function triggerFileDownload(content: string, filename: string, mimeType: string
 // ----------------------------------------------------------------------
 // CSV EXPORT FUNCTIONS
 // ----------------------------------------------------------------------
-
-/**
- * Export Work Logs to CSV
- */
-export function exportWorkLogsToCSV(logs: WorkLog[], customFilename?: string) {
-  const headers = [
-    'Log ID',
-    'Date',
-    'Project Name',
-    'Category',
-    'Hours Spent',
-    'Start Time',
-    'End Time',
-    'Task Description',
-    'Created At',
-  ];
-
-  const rows = logs.map((log) => [
-    log.id,
-    log.date,
-    log.projectName,
-    log.category,
-    log.hoursSpent,
-    log.startTime || '',
-    log.endTime || '',
-    log.taskDescription,
-    log.createdAt,
-  ]);
-
-  const csvContent = [
-    headers.map(escapeCSVField).join(','),
-    ...rows.map((r) => r.map(escapeCSVField).join(',')),
-  ].join('\r\n');
-
-  const filename = customFilename || `workspace-worklogs-${new Date().toISOString().split('T')[0]}.csv`;
-  triggerFileDownload(csvContent, filename);
-}
 
 /**
  * Export Todo Tasks to CSV
@@ -372,163 +335,17 @@ function openPrintReportWindow(title: string, htmlBody: string) {
 }
 
 /**
- * Export Work Logs to PDF Report
- */
-export function exportWorkLogsToPDF(logs: WorkLog[], user?: UserSession | null) {
-  const totalHours = logs.reduce((acc, curr) => acc + curr.hoursSpent, 0);
-  const uniqueProjects = Array.from(new Set(logs.map((l) => l.projectName))).length;
-  const uniqueCategories = Array.from(new Set(logs.map((l) => l.category))).length;
-  const avgHoursPerEntry = logs.length > 0 ? (totalHours / logs.length).toFixed(1) : '0';
-
-  const rowsHTML = logs
-    .map(
-      (log) => `
-      <tr>
-        <td><strong>${log.date}</strong></td>
-        <td><strong>${log.projectName}</strong></td>
-        <td><span class="badge badge-low">${log.category}</span></td>
-        <td><span class="badge badge-hours">${log.hoursSpent} hrs</span></td>
-        <td>${log.startTime ? `${log.startTime} – ${log.endTime || ''}` : '—'}</td>
-        <td>${log.taskDescription || ''}</td>
-      </tr>
-    `
-    )
-    .join('');
-
-  const bodyHTML = `
-    <div class="metrics-grid">
-      <div class="metric-card">
-        <div class="metric-label">Total Time Tracked</div>
-        <div class="metric-val">${totalHours.toFixed(1)} hrs</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Total Entries</div>
-        <div class="metric-val">${logs.length}</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Active Projects</div>
-        <div class="metric-val">${uniqueProjects}</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Avg Hours / Entry</div>
-        <div class="metric-val">${avgHoursPerEntry} hrs</div>
-      </div>
-    </div>
-
-    <h3>Detailed Work Logs & Time Records (${logs.length} Entries)</h3>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 12%;">Date</th>
-          <th style="width: 20%;">Project</th>
-          <th style="width: 14%;">Category</th>
-          <th style="width: 12%;">Duration</th>
-          <th style="width: 14%;">Time Range</th>
-          <th style="width: 28%;">Task Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rowsHTML || '<tr><td colspan="6" style="text-align: center; color: #94a3b8;">No work logs recorded</td></tr>'}
-      </tbody>
-    </table>
-  `;
-
-  openPrintReportWindow(`Work Logs & Time Tracking Report`, bodyHTML);
-}
-
-/**
- * Export Tasks to PDF Report
- */
-export function exportTasksToPDF(tasks: TodoTask[], user?: UserSession | null) {
-  const completed = tasks.filter((t) => t.status === 'completed').length;
-  const inProgress = tasks.filter((t) => t.status === 'in_progress').length;
-  const pending = tasks.filter((t) => t.status === 'pending').length;
-  const completionRate = tasks.length > 0 ? Math.round((completed / tasks.length) * 100) : 0;
-
-  const rowsHTML = tasks
-    .map((task) => {
-      const statusBadge =
-        task.status === 'completed'
-          ? '<span class="badge badge-completed">Completed</span>'
-          : task.status === 'in_progress'
-          ? '<span class="badge badge-inprogress">In Progress</span>'
-          : '<span class="badge badge-pending">Pending</span>';
-
-      const priorityBadge =
-        task.priority === 'high'
-          ? '<span class="badge badge-high">High</span>'
-          : task.priority === 'medium'
-          ? '<span class="badge badge-medium">Medium</span>'
-          : '<span class="badge badge-low">Low</span>';
-
-      return `
-        <tr>
-          <td><strong>${task.title}</strong><br/><small style="color: #64748b;">${task.description || ''}</small></td>
-          <td>${statusBadge}</td>
-          <td>${priorityBadge}</td>
-          <td><span class="badge badge-low">${task.category}</span></td>
-          <td>${task.dueDate || '—'}</td>
-          <td>${task.notifyAt ? new Date(task.notifyAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-        </tr>
-      `;
-    })
-    .join('');
-
-  const bodyHTML = `
-    <div class="metrics-grid">
-      <div class="metric-card">
-        <div class="metric-label">Total Tasks</div>
-        <div class="metric-val">${tasks.length}</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Completion Rate</div>
-        <div class="metric-val" style="color: #16a34a;">${completionRate}%</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Completed</div>
-        <div class="metric-val">${completed}</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Active / Pending</div>
-        <div class="metric-val">${inProgress + pending}</div>
-      </div>
-    </div>
-
-    <h3>Todo Tasks & Action Items Status (${tasks.length} Total)</h3>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 35%;">Task & Description</th>
-          <th style="width: 14%;">Status</th>
-          <th style="width: 12%;">Priority</th>
-          <th style="width: 13%;">Category</th>
-          <th style="width: 13%;">Due Date</th>
-          <th style="width: 13%;">Reminder</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rowsHTML || '<tr><td colspan="6" style="text-align: center; color: #94a3b8;">No tasks recorded</td></tr>'}
-      </tbody>
-    </table>
-  `;
-
-  openPrintReportWindow(`Todo Tasks & Action Items Report`, bodyHTML);
-}
-
-/**
- * Full Workspace Summary PDF Report (Notes, Tasks, and Work Logs)
+ * Full Workspace Summary PDF Report (Notes and Tasks)
  */
 export function exportFullReportToPDF(
   notes: Note[],
   tasks: TodoTask[],
-  logs: WorkLog[],
   user?: UserSession | null
 ) {
-  const totalHours = logs.reduce((acc, curr) => acc + curr.hoursSpent, 0);
   const completedTasks = tasks.filter((t) => t.status === 'completed').length;
 
   const tasksHTML = tasks
-    .slice(0, 10)
+    .slice(0, 15)
     .map(
       (t) => `
       <tr>
@@ -541,22 +358,8 @@ export function exportFullReportToPDF(
     )
     .join('');
 
-  const logsHTML = logs
-    .slice(0, 8)
-    .map(
-      (l) => `
-      <tr>
-        <td>${l.date}</td>
-        <td><strong>${l.projectName}</strong></td>
-        <td><span class="badge badge-hours">${l.hoursSpent} hrs</span></td>
-        <td>${l.taskDescription}</td>
-      </tr>
-    `
-    )
-    .join('');
-
   const notesHTML = notes
-    .slice(0, 6)
+    .slice(0, 8)
     .map(
       (n) => `
       <div style="margin-bottom: 10px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
@@ -568,7 +371,7 @@ export function exportFullReportToPDF(
     .join('');
 
   const bodyHTML = `
-    <div class="metrics-grid">
+    <div class="metrics-grid" style="grid-template-columns: repeat(2, 1fr);">
       <div class="metric-card">
         <div class="metric-label">Total Notes</div>
         <div class="metric-val">${notes.length}</div>
@@ -576,14 +379,6 @@ export function exportFullReportToPDF(
       <div class="metric-card">
         <div class="metric-label">Active Tasks</div>
         <div class="metric-val">${tasks.length} (${completedTasks} done)</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Total Hours Logged</div>
-        <div class="metric-val">${totalHours.toFixed(1)} hrs</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Work Log Entries</div>
-        <div class="metric-val">${logs.length}</div>
       </div>
     </div>
 
@@ -602,24 +397,102 @@ export function exportFullReportToPDF(
       </tbody>
     </table>
 
-    <h3 style="margin-top: 20px;">Recent Work Logs</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Project</th>
-          <th>Duration</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${logsHTML || '<tr><td colspan="4">No work logs</td></tr>'}
-      </tbody>
-    </table>
-
     <h3 style="margin-top: 20px;">Key Documentation & Notes</h3>
     <div>${notesHTML || '<p style="color: #94a3b8;">No notes</p>'}</div>
   `;
 
   openPrintReportWindow(`WorkSpace Executive Summary Report`, bodyHTML);
+}
+
+/**
+ * Export Tasks to PDF Report
+ */
+export function exportTasksToPDF(tasks: TodoTask[], user?: UserSession | null) {
+  const completedTasks = tasks.filter((t) => t.status === 'completed').length;
+  const pendingTasks = tasks.filter((t) => t.status !== 'completed').length;
+
+  const tasksHTML = tasks
+    .map(
+      (t) => `
+      <tr>
+        <td><strong>${t.title}</strong></td>
+        <td><span class="badge ${t.status === 'completed' ? 'badge-completed' : 'badge-pending'}">${t.status}</span></td>
+        <td><span class="badge ${t.priority === 'high' ? 'badge-high' : 'badge-low'}">${t.priority}</span></td>
+        <td>${t.category || 'General'}</td>
+        <td>${t.dueDate || '—'}</td>
+        <td><small>${t.description ? t.description.slice(0, 80) : ''}</small></td>
+      </tr>
+    `
+    )
+    .join('');
+
+  const bodyHTML = `
+    <div class="metrics-grid" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="metric-card">
+        <div class="metric-label">Total Tasks</div>
+        <div class="metric-val">${tasks.length}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Pending / Active</div>
+        <div class="metric-val">${pendingTasks}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Completed</div>
+        <div class="metric-val">${completedTasks}</div>
+      </div>
+    </div>
+
+    <h3>Task List (${tasks.length} items)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Task Title</th>
+          <th>Status</th>
+          <th>Priority</th>
+          <th>Category</th>
+          <th>Due Date</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tasksHTML || '<tr><td colspan="6">No tasks</td></tr>'}
+      </tbody>
+    </table>
+  `;
+
+  openPrintReportWindow(`Tasks Report`, bodyHTML);
+}
+
+/**
+ * Export Notes to PDF Report
+ */
+export function exportNotesToPDF(notes: Note[], user?: UserSession | null) {
+  const notesHTML = notes
+    .map(
+      (n) => `
+      <div style="margin-bottom: 16px; padding: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h4 style="margin: 0; font-size: 14px; font-weight: 700;">${n.title}</h4>
+          <span class="badge badge-low">${n.category}</span>
+        </div>
+        <div style="font-size: 12px; color: #334155; margin-top: 6px; white-space: pre-wrap;">${n.content || ''}</div>
+        <div style="font-size: 10px; color: #94a3b8; margin-top: 8px;">Tags: ${(n.tags || []).join(', ') || 'None'} | Updated: ${n.updatedAt ? new Date(n.updatedAt).toLocaleDateString() : ''}</div>
+      </div>
+    `
+    )
+    .join('');
+
+  const bodyHTML = `
+    <div class="metrics-grid" style="grid-template-columns: repeat(1, 1fr);">
+      <div class="metric-card">
+        <div class="metric-label">Total Notes</div>
+        <div class="metric-val">${notes.length}</div>
+      </div>
+    </div>
+
+    <h3>Notes & Documentation (${notes.length} notes)</h3>
+    <div>${notesHTML || '<p style="color: #94a3b8;">No notes found.</p>'}</div>
+  `;
+
+  openPrintReportWindow(`Notes Report`, bodyHTML);
 }

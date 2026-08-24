@@ -9,10 +9,8 @@ import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
 import { NotesSection } from './components/NotesSection';
 import { TodoSection } from './components/TodoSection';
-import { WorkLogSection } from './components/WorkLogSection';
 import { NoteModal } from './components/NoteModal';
 import { TodoModal } from './components/TodoModal';
-import { WorkLogModal } from './components/WorkLogModal';
 import { AuthModal } from './components/AuthModal';
 import { AuthScreen } from './components/AuthScreen';
 import { SqlSchemaModal } from './components/SqlSchemaModal';
@@ -22,14 +20,13 @@ import { ExportModal } from './components/ExportModal';
 import { UserRoleManagementModal } from './components/UserRoleManagementModal';
 import { PersonalSpaceView } from './components/PersonalSpaceView';
 import { FileManager } from './components/FileManager';
-import { ShareMarketView } from './components/ShareMarketView';
 import { TransactionsView } from './components/TransactionsView';
-import { ChatView } from './components/ChatView';
+import { TransactionModal } from './components/TransactionModal';
 import { TrashSection } from './components/TrashSection';
 import { AccountView } from './components/AccountView';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
-import { Note, TodoTask, WorkLog, Folder, UserFile, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole, TrashItem, TrashItemType } from './types';
-import { INITIAL_NOTES, INITIAL_TODOS, INITIAL_WORKLOGS } from './data/initialData';
+import { Note, TodoTask, Folder, UserFile, UserTransaction, TransactionType, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole, TrashItem, TrashItemType } from './types';
+import { INITIAL_NOTES, INITIAL_TODOS } from './data/initialData';
 import {
   getCurrentStoredUser,
   getInitialSupabaseSession,
@@ -47,15 +44,16 @@ import {
   syncFetchTodos,
   syncSaveTodo,
   syncDeleteTodo,
-  syncFetchWorkLogs,
-  syncSaveWorkLog,
-  syncDeleteWorkLog,
   syncFetchFolders,
   syncCreateFolder,
   syncDeleteFolder,
   syncUploadFile,
   syncFetchFiles,
   syncDeleteFile,
+  syncFetchTransactions,
+  syncSaveTransaction,
+  syncDeleteTransaction,
+  subscribeToTransactions,
 } from './lib/supabase';
 import {
   playAlertSound,
@@ -149,9 +147,13 @@ export default function App() {
   // Core Data Collections (User-Isolated)
   const [notes, setNotes] = useState<Note[]>([]);
   const [tasks, setTasks] = useState<TodoTask[]>([]);
-  const [worklogs, setWorklogs] = useState<WorkLog[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [files, setFiles] = useState<UserFile[]>([]);
+  const [transactions, setTransactions] = useState<UserTransaction[]>([]);
+
+  const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<UserTransaction | null>(null);
+  const [transactionDefaultType, setTransactionDefaultType] = useState<TransactionType>('RECEIPT');
 
   // Trash State
   const [trashItems, setTrashItems] = useState<TrashItem[]>(() => {
@@ -170,7 +172,6 @@ export default function App() {
   // Active filters (hide trashed items)
   const activeNotes = notes.filter(n => !trashItems.some(t => t.originalId === n.id));
   const activeTasks = tasks.filter(task => !trashItems.some(t => t.originalId === task.id));
-  const activeWorklogs = worklogs.filter(w => !trashItems.some(t => t.originalId === w.id));
   const activeFolders = folders.filter(f => !trashItems.some(t => t.originalId === f.id));
   const activeFiles = files.filter(f => !trashItems.some(t => t.originalId === f.id));
 
@@ -184,10 +185,6 @@ export default function App() {
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TodoTask | null>(null);
 
-  const [isWorkLogModalOpen, setIsWorkLogModalOpen] = useState(false);
-  const [editingWorkLog, setEditingWorkLog] = useState<WorkLog | null>(null);
-  const [prefilledHours, setPrefilledHours] = useState<number | undefined>(undefined);
-
   // Automatically open Sign Up modal on first visit if no user is logged in
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(() => {
     return !getCurrentStoredUser();
@@ -198,9 +195,9 @@ export default function App() {
   const [isDeployGuideOpen, setIsDeployGuideOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isUserRolesModalOpen, setIsUserRolesModalOpen] = useState(false);
-  const [exportModalType, setExportModalType] = useState<'all' | 'tasks' | 'worklogs' | 'notes'>('all');
+  const [exportModalType, setExportModalType] = useState<'all' | 'tasks' | 'notes'>('all');
 
-  const handleOpenExportModal = (type: 'all' | 'tasks' | 'worklogs' | 'notes' = 'all') => {
+  const handleOpenExportModal = (type: 'all' | 'tasks' | 'notes' = 'all') => {
     setExportModalType(type);
     setIsExportModalOpen(true);
   };
@@ -290,21 +287,21 @@ export default function App() {
   const loadUserData = useCallback(async (user: UserSession) => {
     setIsSyncing(true);
     try {
-      const [notesRes, todosRes, logsRes, foldersRes, filesRes] = await Promise.all([
+      const [notesRes, todosRes, foldersRes, filesRes, txRes] = await Promise.all([
         syncFetchNotes(user.id),
         syncFetchTodos(user.id),
-        syncFetchWorkLogs(user.id),
         syncFetchFolders(user.id),
         syncFetchFiles(user.id),
+        syncFetchTransactions(user.id),
       ]);
 
       setNotes(notesRes.notes);
       setTasks(todosRes.todos);
-      setWorklogs(logsRes.worklogs);
       setFolders(foldersRes.folders);
       setFiles(filesRes.files);
+      setTransactions(txRes.transactions);
 
-      if (notesRes.isCloud || todosRes.isCloud || logsRes.isCloud || foldersRes.isCloud || filesRes.isCloud) {
+      if (notesRes.isCloud || todosRes.isCloud || foldersRes.isCloud || filesRes.isCloud || txRes.isCloud) {
         setSyncStatusText('Cloud Connected • Supabase Live Sync');
       } else {
         setSyncStatusText('User-Isolated Local Space');
@@ -323,11 +320,34 @@ export default function App() {
     } else {
       setNotes([]);
       setTasks([]);
-      setWorklogs([]);
       setFolders([]);
       setFiles([]);
+      setTransactions([]);
     }
   }, [currentUser, loadUserData]);
+
+  // Supabase Realtime Subscription for Transactions
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsubscribe = subscribeToTransactions(
+      currentUser.id,
+      (newTx) => {
+        setTransactions((prev) => {
+          if (prev.some((t) => t.id === newTx.id)) return prev;
+          return [newTx, ...prev];
+        });
+      },
+      (updatedTx) => {
+        setTransactions((prev) => prev.map((t) => (t.id === updatedTx.id ? updatedTx : t)));
+      },
+      (deletedId) => {
+        setTransactions((prev) => prev.filter((t) => t.id !== deletedId));
+      }
+    );
+    return () => {
+      unsubscribe();
+    };
+  }, [currentUser]);
 
   // Keep a reference to current notes and tasks for the background monitoring timer
   const notesRef = useRef(notes);
@@ -504,34 +524,29 @@ export default function App() {
     const pendingTasks = activeTasks.filter((t) => t.status === 'pending').length;
     const inProgressTasks = activeTasks.filter((t) => t.status === 'in_progress').length;
     const completedTasks = activeTasks.filter((t) => t.status === 'completed').length;
-
-    const hoursLoggedToday = activeWorklogs
-      .filter((l) => l.date === todayStr)
-      .reduce((acc, curr) => acc + curr.hoursSpent, 0);
-
-    const totalHoursWeek = activeWorklogs.reduce((acc, curr) => acc + curr.hoursSpent, 0);
+    const totalFolders = activeFolders.length;
+    const totalFiles = activeFiles.length;
 
     return {
       totalNotes,
       pendingTasks,
       inProgressTasks,
       completedTasks,
-      hoursLoggedToday,
-      totalHoursWeek,
+      totalFolders,
+      totalFiles,
     };
-  }, [activeNotes, activeTasks, activeWorklogs, todayStr]);
+  }, [activeNotes, activeTasks, activeFolders, activeFiles]);
 
   // Unique categories aggregated across all entities
   const availableCategories = useMemo(() => {
     const cats = new Set<string>();
     activeNotes.forEach((n) => n.category && cats.add(n.category));
     activeTasks.forEach((t) => t.category && cats.add(t.category));
-    activeWorklogs.forEach((w) => w.category && cats.add(w.category));
     return Array.from(cats);
-  }, [activeNotes, activeTasks, activeWorklogs]);
+  }, [activeNotes, activeTasks]);
 
   // Handler for "+ Create" quick-launcher
-  const handleOpenNewModal = (type: 'note' | 'todo' | 'worklog') => {
+  const handleOpenNewModal = (type: 'note' | 'todo') => {
     if (!currentUser) {
       setIsAuthModalOpen(true);
       return;
@@ -542,10 +557,6 @@ export default function App() {
     } else if (type === 'todo') {
       setEditingTask(null);
       setIsTodoModalOpen(true);
-    } else if (type === 'worklog') {
-      setEditingWorkLog(null);
-      setPrefilledHours(undefined);
-      setIsWorkLogModalOpen(true);
     }
   };
 
@@ -587,7 +598,6 @@ export default function App() {
     if (res.success) {
       setNotes([]);
       setTasks([]);
-      setWorklogs([]);
       setFolders([]);
       setFiles([]);
       setTrashItems([]);
@@ -748,68 +758,58 @@ export default function App() {
     setIsTodoModalOpen(true);
   };
 
-  // Work Log CRUD Operations with Supabase Sync
-  const handleSaveWorkLog = async (
-    logData: Omit<WorkLog, 'id' | 'createdAt'>,
-    id?: string
-  ): Promise<{ success: boolean; error?: string }> => {
+  // Transaction CRUD Operations with Supabase Sync
+  const handleSaveTransaction = async (txData: Omit<UserTransaction, 'id' | 'createdAt' | 'userId'>, id?: string) => {
     if (!currentUser) {
-      showToast('You must be signed in to save work logs.', 'error');
+      showToast('You must be signed in to save transactions.', 'error');
       return { success: false, error: 'User session not found' };
     }
 
     const nowIso = new Date().toISOString();
-    const existing = id ? worklogs.find((l) => l.id === id) : null;
-    const logToSave: WorkLog = {
-      id: id || `worklog-${Date.now()}`,
-      ...logData,
+    const existing = id ? transactions.find((t) => t.id === id) : null;
+    const txToSave: UserTransaction = {
+      id: id || `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      userId: currentUser.id,
+      ...txData,
       createdAt: existing?.createdAt || nowIso,
     };
 
-    const res = await syncSaveWorkLog(currentUser.id, logToSave);
+    const res = await syncSaveTransaction(currentUser.id, txToSave);
     if (res.error) {
-      showToast(`Failed to save Work Log: ${res.error}`, 'error');
+      showToast(`Failed to save transaction: ${res.error}`, 'error');
       return { success: false, error: res.error };
     }
 
-    const finalLog = res.data || logToSave;
-    setWorklogs((prev) => {
-      const idx = prev.findIndex((l) => l.id === finalLog.id || (id ? l.id === id : false));
+    const finalTx = res.data || txToSave;
+    setTransactions((prev) => {
+      const idx = prev.findIndex((t) => t.id === finalTx.id);
       if (idx !== -1) {
         const copy = [...prev];
-        copy[idx] = finalLog;
+        copy[idx] = finalTx;
         return copy;
       }
-      return [finalLog, ...prev];
+      return [finalTx, ...prev];
     });
 
-    showToast(id ? 'Work log updated successfully' : 'Time entry saved successfully', 'success');
+    showToast(id ? 'Transaction updated successfully' : 'Transaction added successfully', 'success');
     return { success: true };
   };
 
-  const handleDeleteWorkLog = async (id: string) => {
+  const handleDeleteTransaction = async (id: string) => {
     if (!currentUser) return;
-    const log = worklogs.find(w => w.id === id);
-    if (log) {
-      // Execute the actual Supabase delete query and remove from state
-      setWorklogs((prev) => prev.filter((l) => l.id !== id));
-      await syncDeleteWorkLog(currentUser.id, id);
+    await syncDeleteTransaction(currentUser.id, id);
+    setTransactions((prev) => prev.filter((t) => t.id !== id));
+    showToast('Transaction deleted', 'info');
+  };
 
-      handleMoveToTrash(id, 'worklog', log.taskDescription, log);
-      showToast('Work log deleted and moved to trash', 'info');
+  const handleOpenTransactionModal = (type: TransactionType = 'RECEIPT', tx: UserTransaction | null = null) => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      return;
     }
-  };
-
-  const handleEditWorkLog = (log: WorkLog) => {
-    setEditingWorkLog(log);
-    setPrefilledHours(undefined);
-    setIsWorkLogModalOpen(true);
-  };
-
-  const handleAddWorkLogWithHours = (hours?: number) => {
-    setEditingWorkLog(null);
-    setPrefilledHours(hours);
-    setIsWorkLogModalOpen(true);
+    setTransactionDefaultType(type);
+    setEditingTransaction(tx);
+    setIsTransactionModalOpen(true);
   };
 
   // Folder & File CRUD Operations with Supabase Sync
@@ -894,10 +894,6 @@ export default function App() {
       const data = item.data as TodoTask;
       setTasks(prev => [data, ...prev]);
       await syncSaveTodo(currentUser.id, data);
-    } else if (item.type === 'worklog') {
-      const data = item.data as WorkLog;
-      setWorklogs(prev => [data, ...prev]);
-      await syncSaveWorkLog(currentUser.id, data);
     } else if (item.type === 'folder') {
       const data = item.data as Folder;
       setFolders(prev => [data, ...prev]);
@@ -934,18 +930,16 @@ export default function App() {
     if (!currentUser) return;
     if (
       window.confirm(
-        `Reset all Notes, Todos, and Work Logs for user "${currentUser.email}" back to initial sample items?`
+        `Reset all Notes and Todos for user "${currentUser.email}" back to initial sample items?`
       )
     ) {
       setNotes(INITIAL_NOTES);
       setTasks(INITIAL_TODOS);
-      setWorklogs(INITIAL_WORKLOGS);
       setSelectedCategory(null);
       setSearchQuery('');
 
       for (const n of INITIAL_NOTES) await syncSaveNote(currentUser.id, n);
       for (const t of INITIAL_TODOS) await syncSaveTodo(currentUser.id, t);
-      for (const w of INITIAL_WORKLOGS) await syncSaveWorkLog(currentUser.id, w);
     }
   };
 
@@ -1028,10 +1022,8 @@ export default function App() {
           onOpenUserRolesModal={() => setIsUserRolesModalOpen(true)}
           notes={notes}
           tasks={tasks}
-          worklogs={worklogs}
           onEditNote={handleEditNote}
           onEditTask={handleEditTask}
-          onEditWorkLog={handleEditWorkLog}
         />
 
         {/* Global Cloud Sync & User Context Sub-Bar */}
@@ -1073,7 +1065,6 @@ export default function App() {
                   stats={stats}
                   notes={activeNotes}
                   tasks={activeTasks}
-                  worklogs={activeWorklogs}
                   onNavigate={(sec) => {
                     setActiveSection(sec);
                     setSearchQuery('');
@@ -1082,7 +1073,6 @@ export default function App() {
                   onToggleTaskStatus={handleToggleTaskStatus}
                   onEditNote={handleEditNote}
                   onEditTask={handleEditTask}
-                  onEditWorkLog={handleEditWorkLog}
                   searchQuery={searchQuery}
                   isDark={isDark}
                   onOpenExportModal={handleOpenExportModal}
@@ -1092,7 +1082,6 @@ export default function App() {
                   currentUser={currentUser}
                   notes={activeNotes}
                   tasks={activeTasks}
-                  worklogs={activeWorklogs}
                   onNavigate={(sec) => {
                     setActiveSection(sec);
                     setSearchQuery('');
@@ -1101,7 +1090,6 @@ export default function App() {
                   onToggleTaskStatus={handleToggleTaskStatus}
                   onEditNote={handleEditNote}
                   onEditTask={handleEditTask}
-                  onEditWorkLog={handleEditWorkLog}
                   searchQuery={searchQuery}
                   onOpenExportModal={handleOpenExportModal}
                 />
@@ -1140,18 +1128,6 @@ export default function App() {
               />
             )}
 
-            {activeSection === 'worklogs' && (
-              <WorkLogSection
-                logs={activeWorklogs}
-                onAddLog={handleAddWorkLogWithHours}
-                onEditLog={handleEditWorkLog}
-                onDeleteLog={handleDeleteWorkLog}
-                searchQuery={searchQuery}
-                selectedCategory={selectedCategory}
-                onOpenExportModal={handleOpenExportModal}
-              />
-            )}
-
             {activeSection === 'files' && (
               <FileManager
                 folders={activeFolders}
@@ -1165,26 +1141,12 @@ export default function App() {
               />
             )}
 
-            {activeSection === 'sharemarket' && (
-              <ShareMarketView
-                userId={currentUser?.id || 'demo-user'}
-                onShowToast={showToast}
-              />
-            )}
-
             {activeSection === 'transactions' && (
               <TransactionsView
-                userId={currentUser?.id || 'demo-user'}
-                onShowToast={showToast}
-                searchQuery={searchQuery}
-              />
-            )}
-
-            {activeSection === 'chat' && (
-              <ChatView
-                currentUser={currentUser}
-                onShowToast={showToast}
-                onOpenAuth={handleOpenAuth}
+                transactions={transactions}
+                onOpenModal={handleOpenTransactionModal}
+                onDeleteTransaction={handleDeleteTransaction}
+                syncStatusText={syncStatusText}
               />
             )}
 
@@ -1274,7 +1236,6 @@ export default function App() {
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
         tasks={tasks}
-        worklogs={worklogs}
         notes={notes}
         currentUser={currentUser}
         initialType={exportModalType}
@@ -1328,17 +1289,16 @@ export default function App() {
         initialTask={editingTask}
       />
 
-      {/* Work Log Form Modal */}
-      <WorkLogModal
-        isOpen={isWorkLogModalOpen}
+      {/* Transaction Form Modal */}
+      <TransactionModal
+        isOpen={isTransactionModalOpen}
         onClose={() => {
-          setIsWorkLogModalOpen(false);
-          setEditingWorkLog(null);
-          setPrefilledHours(undefined);
+          setIsTransactionModalOpen(false);
+          setEditingTransaction(null);
         }}
-        onSave={handleSaveWorkLog}
-        initialLog={editingWorkLog}
-        prefilledHours={prefilledHours}
+        onSave={handleSaveTransaction}
+        initialTransaction={editingTransaction}
+        defaultType={transactionDefaultType}
       />
     </div>
   );

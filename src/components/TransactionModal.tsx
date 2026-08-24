@@ -16,7 +16,7 @@ const INCOME_CATEGORIES = ['Sales', 'Salary', 'Investment Returns', 'Freelance',
 const EXPENSE_CATEGORIES = ['Rent', 'Utilities', 'Grocery', 'Food & Snacks', 'Transport', 'Supplies', 'Marketing', 'Salary Paid', 'Software', 'Other Expense'];
 const TRANSFER_CATEGORIES = ['Bank Transfer', 'ATM Withdrawal', 'Internal Transfer', 'Owner Draw', 'Other Transfer'];
 
-const PAYMENT_METHODS = ['Cash', 'eSewa', 'Khalti', 'Bank Transfer', 'Debit / Credit Card', 'Mobile Banking', 'Other'];
+const PAYMENT_METHODS = ['Cash', 'eSewa', 'Khalti', 'connectIPS', 'Bank Transfer', 'Debit / Credit Card', 'Mobile Banking', 'Other'];
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
   isOpen,

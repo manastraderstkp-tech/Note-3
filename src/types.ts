@@ -19,6 +19,8 @@ export interface UserTransaction {
   description?: string;
   transactionDate: string; // YYYY-MM-DD
   createdAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface TransactionReminder {
@@ -33,6 +35,8 @@ export interface TransactionReminder {
   paymentMethod: string;
   isActive: boolean;
   createdAt: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export type SoundProfile = 'chime' | 'pulse' | 'fanfare' | 'marimba';
@@ -151,7 +155,7 @@ export interface MetricStats {
   totalFiles?: number;
 }
 
-export type TrashItemType = 'note' | 'todo' | 'file' | 'folder';
+export type TrashItemType = 'note' | 'todo' | 'file' | 'folder' | 'transaction' | 'reminder';
 
 export interface TrashItem {
   id: string;

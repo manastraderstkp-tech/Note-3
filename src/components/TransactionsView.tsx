@@ -22,6 +22,7 @@ import {
   Check,
 } from 'lucide-react';
 import { UserTransaction, TransactionType, TransactionReminder } from '../types';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface TransactionsViewProps {
   transactions: UserTransaction[];
@@ -49,6 +50,18 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'RECEIPT' | 'PAYMENT' | 'TRANSFER'>('ALL');
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'this_month'>('all');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
+
+  const [deleteTxState, setDeleteTxState] = useState<{ isOpen: boolean; id: string; name: string }>({
+    isOpen: false,
+    id: '',
+    name: '',
+  });
+
+  const [deleteRemState, setDeleteRemState] = useState<{ isOpen: boolean; id: string; name: string }>({
+    isOpen: false,
+    id: '',
+    name: '',
+  });
 
   // Available categories for filter dropdown
   const allCategories = useMemo(() => {
@@ -424,9 +437,11 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                             </button>
                             <button
                               onClick={() => {
-                                if (confirm('Are you sure you want to delete this transaction?')) {
-                                  onDeleteTransaction(tx.id);
-                                }
+                                setDeleteTxState({
+                                  isOpen: true,
+                                  id: tx.id,
+                                  name: tx.description ? `${tx.description} (Rs. ${tx.amount})` : `${tx.category} - Rs. ${tx.amount}`,
+                                });
                               }}
                               title="Delete Transaction"
                               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
@@ -461,7 +476,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                     statusColor="border-rose-300 dark:border-rose-800 bg-white dark:bg-slate-900"
                     onMarkPaid={() => onMarkReminderAsPaid(rem)}
                     onEdit={() => onOpenReminderModal(rem)}
-                    onDelete={() => onDeleteReminder(rem.id)}
+                    onDelete={() => setDeleteRemState({ isOpen: true, id: rem.id, name: rem.title })}
                   />
                 ))}
               </div>
@@ -483,7 +498,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                     statusColor="border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900"
                     onMarkPaid={() => onMarkReminderAsPaid(rem)}
                     onEdit={() => onOpenReminderModal(rem)}
-                    onDelete={() => onDeleteReminder(rem.id)}
+                    onDelete={() => setDeleteRemState({ isOpen: true, id: rem.id, name: rem.title })}
                   />
                 ))}
               </div>
@@ -512,7 +527,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                     statusColor="border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
                     onMarkPaid={() => onMarkReminderAsPaid(rem)}
                     onEdit={() => onOpenReminderModal(rem)}
-                    onDelete={() => onDeleteReminder(rem.id)}
+                    onDelete={() => setDeleteRemState({ isOpen: true, id: rem.id, name: rem.title })}
                   />
                 ))}
               </div>
@@ -520,6 +535,32 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           </div>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        isOpen={deleteTxState.isOpen}
+        onClose={() => setDeleteTxState({ ...deleteTxState, isOpen: false })}
+        onConfirm={async () => {
+          onDeleteTransaction(deleteTxState.id);
+          setDeleteTxState({ isOpen: false, id: '', name: '' });
+        }}
+        itemName={deleteTxState.name}
+        title="Move to Trash?"
+        message="Are you sure you want to move this item to Trash?"
+        confirmButtonText="Move to Trash"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deleteRemState.isOpen}
+        onClose={() => setDeleteRemState({ ...deleteRemState, isOpen: false })}
+        onConfirm={async () => {
+          onDeleteReminder(deleteRemState.id);
+          setDeleteRemState({ isOpen: false, id: '', name: '' });
+        }}
+        itemName={deleteRemState.name}
+        title="Move to Trash?"
+        message="Are you sure you want to move this item to Trash?"
+        confirmButtonText="Move to Trash"
+      />
     </div>
   );
 };
@@ -589,11 +630,7 @@ const ReminderCard: React.FC<ReminderCardProps> = ({
             <Edit3 className="w-4 h-4" />
           </button>
           <button
-            onClick={() => {
-              if (confirm('Are you sure you want to delete this reminder?')) {
-                onDelete();
-              }
-            }}
+            onClick={onDelete}
             title="Delete Reminder"
             className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition"
           >

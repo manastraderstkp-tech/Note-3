@@ -54,10 +54,16 @@ import {
   syncFetchTransactions,
   syncSaveTransaction,
   syncDeleteTransaction,
+  syncSoftDeleteTransaction,
+  syncRestoreTransaction,
+  syncPermanentDeleteTransaction,
   subscribeToTransactions,
   syncFetchReminders,
   syncSaveReminder,
   syncDeleteReminder,
+  syncSoftDeleteReminder,
+  syncRestoreReminder,
+  syncPermanentDeleteReminder,
   subscribeToReminders,
   calculateNextDueDate,
 } from './lib/supabase';
@@ -833,9 +839,14 @@ export default function App() {
 
   const handleDeleteTransaction = async (id: string) => {
     if (!currentUser) return;
-    await syncDeleteTransaction(currentUser.id, id);
-    setTransactions((prev) => prev.filter((t) => t.id !== id));
-    showToast('Transaction deleted', 'info');
+    const tx = transactions.find((t) => t.id === id);
+    if (tx) {
+      setTransactions((prev) => prev.filter((t) => t.id !== id));
+      await syncSoftDeleteTransaction(currentUser.id, id);
+      const title = tx.description ? `${tx.description} (Rs. ${tx.amount})` : `${tx.category} - Rs. ${tx.amount}`;
+      handleMoveToTrash(id, 'transaction', title, tx);
+      showToast('Transaction moved to trash', 'info');
+    }
   };
 
   const handleOpenTransactionModal = (type: TransactionType = 'RECEIPT', tx: UserTransaction | null = null) => {
@@ -878,9 +889,13 @@ export default function App() {
 
   const handleDeleteReminder = async (id: string) => {
     if (!currentUser) return;
-    await syncDeleteReminder(currentUser.id, id);
-    setReminders((prev) => prev.filter((r) => r.id !== id));
-    showToast('Recurring reminder deleted', 'info');
+    const rem = reminders.find((r) => r.id === id);
+    if (rem) {
+      setReminders((prev) => prev.filter((r) => r.id !== id));
+      await syncSoftDeleteReminder(currentUser.id, id);
+      handleMoveToTrash(id, 'reminder', rem.title, rem);
+      showToast('Recurring reminder moved to trash', 'info');
+    }
   };
 
   const handleOpenReminderModal = (rem: TransactionReminder | null = null) => {
@@ -1012,9 +1027,14 @@ export default function App() {
     } else if (item.type === 'file') {
       const data = item.data as UserFile;
       setFiles(prev => [data, ...prev]);
-      // Note: Re-uploading file to Supabase Storage requires the File blob, which is not available in TrashItem.
-      // A complete restore for files would require caching the Blob or moving the file in Supabase Storage.
-      // For this implementation, we just restore the database record.
+    } else if (item.type === 'transaction') {
+      const data = item.data as UserTransaction;
+      setTransactions(prev => [data, ...prev]);
+      await syncRestoreTransaction(currentUser.id, data.id);
+    } else if (item.type === 'reminder') {
+      const data = item.data as TransactionReminder;
+      setReminders(prev => [data, ...prev]);
+      await syncRestoreReminder(currentUser.id, data.id);
     }
 
     showToast(`${item.title} restored`, 'success');
@@ -1022,9 +1042,12 @@ export default function App() {
 
   const handlePermanentDelete = async (item: TrashItem) => {
     if (!currentUser) return;
-    // Items are already deleted from Supabase during the main delete action,
-    // so we just remove them from the trash state.
     setTrashItems(prev => prev.filter(t => t.id !== item.id));
+    if (item.type === 'transaction') {
+      await syncPermanentDeleteTransaction(currentUser.id, item.originalId);
+    } else if (item.type === 'reminder') {
+      await syncPermanentDeleteReminder(currentUser.id, item.originalId);
+    }
     showToast('Item permanently deleted', 'info');
   };
 

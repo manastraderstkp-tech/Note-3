@@ -1557,7 +1557,71 @@ export async function syncSaveTransaction(
   }
 }
 
-export async function syncDeleteTransaction(
+export async function syncSoftDeleteTransaction(
+  userId: string,
+  txId: string
+): Promise<boolean> {
+  const client = getSupabase();
+  const localKey = getUserTransactionsKey(userId);
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const list: UserTransaction[] = JSON.parse(raw);
+      const updated = list.map((t) => t.id === txId ? { ...t, isDeleted: true, deletedAt: new Date().toISOString() } : t);
+      localStorage.setItem(localKey, JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.warn('Error updating local cache for soft delete tx', e);
+  }
+
+  if (client) {
+    try {
+      await client
+        .from('user_transactions')
+        .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+        .eq('id', txId)
+        .eq('user_id', userId);
+    } catch (e) {
+      console.warn('Error soft deleting transaction in Supabase:', e);
+    }
+  }
+  return true;
+}
+
+export async function syncRestoreTransaction(
+  userId: string,
+  txId: string
+): Promise<boolean> {
+  const client = getSupabase();
+  const localKey = getUserTransactionsKey(userId);
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const list: UserTransaction[] = JSON.parse(raw);
+      const updated = list.map((t) => t.id === txId ? { ...t, isDeleted: false, deletedAt: undefined } : t);
+      localStorage.setItem(localKey, JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.warn('Error updating local cache for restore tx', e);
+  }
+
+  if (client) {
+    try {
+      await client
+        .from('user_transactions')
+        .update({ is_deleted: false, deleted_at: null })
+        .eq('id', txId)
+        .eq('user_id', userId);
+    } catch (e) {
+      console.warn('Error restoring transaction in Supabase:', e);
+    }
+  }
+  return true;
+}
+
+export async function syncPermanentDeleteTransaction(
   userId: string,
   txId: string
 ): Promise<boolean> {
@@ -1583,6 +1647,8 @@ export async function syncDeleteTransaction(
   }
   return true;
 }
+
+export const syncDeleteTransaction = syncSoftDeleteTransaction;
 
 export function subscribeToTransactions(
   userId: string,
@@ -1850,7 +1916,71 @@ export async function syncSaveReminder(
   }
 }
 
-export async function syncDeleteReminder(
+export async function syncSoftDeleteReminder(
+  userId: string,
+  remId: string
+): Promise<boolean> {
+  const client = getSupabase();
+  const localKey = getUserRemindersKey(userId);
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const list: TransactionReminder[] = JSON.parse(raw);
+      const updated = list.map((r) => r.id === remId ? { ...r, isDeleted: true, deletedAt: new Date().toISOString() } : r);
+      localStorage.setItem(localKey, JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.warn('Error updating local cache for soft delete reminder', e);
+  }
+
+  if (client) {
+    try {
+      await client
+        .from('transaction_reminders')
+        .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+        .eq('id', remId)
+        .eq('user_id', userId);
+    } catch (e) {
+      console.warn('Error soft deleting reminder in Supabase:', e);
+    }
+  }
+  return true;
+}
+
+export async function syncRestoreReminder(
+  userId: string,
+  remId: string
+): Promise<boolean> {
+  const client = getSupabase();
+  const localKey = getUserRemindersKey(userId);
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const list: TransactionReminder[] = JSON.parse(raw);
+      const updated = list.map((r) => r.id === remId ? { ...r, isDeleted: false, deletedAt: undefined } : r);
+      localStorage.setItem(localKey, JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.warn('Error updating local cache for restore reminder', e);
+  }
+
+  if (client) {
+    try {
+      await client
+        .from('transaction_reminders')
+        .update({ is_deleted: false, deleted_at: null })
+        .eq('id', remId)
+        .eq('user_id', userId);
+    } catch (e) {
+      console.warn('Error restoring reminder in Supabase:', e);
+    }
+  }
+  return true;
+}
+
+export async function syncPermanentDeleteReminder(
   userId: string,
   remId: string
 ): Promise<boolean> {
@@ -1876,6 +2006,8 @@ export async function syncDeleteReminder(
   }
   return true;
 }
+
+export const syncDeleteReminder = syncSoftDeleteReminder;
 
 export function subscribeToReminders(
   userId: string,

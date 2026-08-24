@@ -6,6 +6,9 @@ interface ConfirmDeleteModalProps {
   onClose: () => void;
   onConfirm: () => Promise<void> | void;
   itemName: string;
+  title?: string;
+  message?: string;
+  confirmButtonText?: string;
 }
 
 export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
@@ -13,6 +16,9 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   onClose,
   onConfirm,
   itemName,
+  title = 'Delete Item',
+  message = 'Are you sure you want to delete this item?',
+  confirmButtonText = 'Delete',
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -64,11 +70,11 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
           </div>
           
           <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-            Delete Item
+            {title}
           </h3>
           
           <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            Are you sure you want to delete this item?<br />
+            {message}<br />
             <strong className="mt-2 block font-semibold text-slate-700 dark:text-slate-200">
               "{itemName}"
             </strong>
@@ -99,7 +105,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
                 <span>Deleting...</span>
               </>
             ) : (
-              <span>Delete</span>
+              <span>{confirmButtonText}</span>
             )}
           </button>
         </div>

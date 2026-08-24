@@ -16,22 +16,35 @@ import {
   Wallet,
   ShieldCheck,
   CheckCircle,
+  Bell,
+  AlertTriangle,
+  Clock,
+  Check,
 } from 'lucide-react';
-import { UserTransaction, TransactionType } from '../types';
+import { UserTransaction, TransactionType, TransactionReminder } from '../types';
 
 interface TransactionsViewProps {
   transactions: UserTransaction[];
+  reminders: TransactionReminder[];
   onOpenModal: (type?: TransactionType, tx?: UserTransaction) => void;
   onDeleteTransaction: (id: string) => void;
+  onOpenReminderModal: (rem?: TransactionReminder | null) => void;
+  onDeleteReminder: (id: string) => void;
+  onMarkReminderAsPaid: (rem: TransactionReminder) => void;
   syncStatusText: string;
 }
 
 export const TransactionsView: React.FC<TransactionsViewProps> = ({
   transactions,
+  reminders,
   onOpenModal,
   onDeleteTransaction,
+  onOpenReminderModal,
+  onDeleteReminder,
+  onMarkReminderAsPaid,
   syncStatusText,
 }) => {
+  const [activeTab, setActiveTab] = useState<'transactions' | 'reminders'>('transactions');
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'RECEIPT' | 'PAYMENT' | 'TRANSFER'>('ALL');
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'this_month'>('all');
@@ -49,13 +62,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   // Filtered transactions
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
-      // Type filter
       if (typeFilter !== 'ALL' && tx.type !== typeFilter) return false;
-
-      // Category filter
       if (selectedCategoryFilter !== 'ALL' && tx.category !== selectedCategoryFilter) return false;
 
-      // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesDesc = tx.description?.toLowerCase().includes(q) || false;
@@ -65,7 +74,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         if (!matchesDesc && !matchesCat && !matchesPm && !matchesAmount) return false;
       }
 
-      // Date filter
       if (dateFilter === 'today') {
         const todayStr = new Date().toISOString().split('T')[0];
         if (tx.transactionDate !== todayStr) return false;
@@ -94,6 +102,39 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     };
   }, [transactions]);
 
+  // Reminders categorization
+  const todayStr = new Date().toISOString().split('T')[0];
+  const { overdueReminders, dueSoonReminders, upcomingReminders } = useMemo(() => {
+    const overdue: TransactionReminder[] = [];
+    const dueSoon: TransactionReminder[] = [];
+    const upcoming: TransactionReminder[] = [];
+
+    const todayDate = new Date(todayStr);
+
+    reminders.forEach((r) => {
+      if (!r.isActive) {
+        upcoming.push(r);
+        return;
+      }
+      const dueDate = new Date(r.nextDueDate);
+      const diffDays = Math.ceil((dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (r.nextDueDate < todayStr) {
+        overdue.push(r);
+      } else if (diffDays <= (r.remindDaysBefore ?? 3)) {
+        dueSoon.push(r);
+      } else {
+        upcoming.push(r);
+      }
+    });
+
+    return {
+      overdueReminders: overdue,
+      dueSoonReminders: dueSoon,
+      upcomingReminders: upcoming,
+    };
+  }, [reminders, todayStr]);
+
   // Export CSV
   const handleExportCSV = () => {
     if (filteredTransactions.length === 0) {
@@ -117,7 +158,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `transactions_export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `transactions_export_${todayStr}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -131,256 +172,434 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           <div className="flex items-center gap-2 mb-1">
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Accounting Ledger
+              Accounting Ledger & Subscriptions
             </span>
             <span className="text-xs text-slate-400 dark:text-slate-500">• {syncStatusText}</span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-            My Transactions
+            Transactions & Recurring Reminders
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Track income receipts, payments, and account transfers in real-time.
-          </p>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <button
-            onClick={() => onOpenModal('RECEIPT')}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold shadow-sm transition-all"
-          >
-            <Plus className="h-4 w-4" />
-            + Add Income
-          </button>
-          <button
-            onClick={() => onOpenModal('PAYMENT')}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm transition-all"
-          >
-            <Plus className="h-4 w-4" />
-            - Add Expense
-          </button>
-          <button
-            onClick={handleExportCSV}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-semibold transition-all"
-          >
-            <Download className="h-4 w-4" />
-            Export CSV
-          </button>
+        <div className="flex items-center gap-3">
+          {activeTab === 'transactions' ? (
+            <>
+              <button
+                onClick={() => onOpenModal('RECEIPT')}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 text-white font-medium text-sm hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 transition"
+              >
+                <ArrowDownLeft className="h-4 w-4" />
+                Add Receipt
+              </button>
+              <button
+                onClick={() => onOpenModal('PAYMENT')}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 text-white font-medium text-sm hover:bg-rose-700 shadow-lg shadow-rose-600/20 transition"
+              >
+                <ArrowUpRight className="h-4 w-4" />
+                Add Payment
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => onOpenReminderModal(null)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 shadow-lg shadow-indigo-600/20 transition"
+            >
+              <Bell className="h-4 w-4" />
+              New Recurring Reminder
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-        {/* Total Income */}
+      {/* Tabs */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800">
+        <button
+          onClick={() => setActiveTab('transactions')}
+          className={`flex items-center gap-2 py-3 px-6 text-sm font-semibold border-b-2 transition-colors ${
+            activeTab === 'transactions'
+              ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400'
+          }`}
+        >
+          <Wallet className="w-4 h-4" />
+          <span>Transactions Ledger ({transactions.length})</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('reminders')}
+          className={`flex items-center gap-2 py-3 px-6 text-sm font-semibold border-b-2 transition-colors relative ${
+            activeTab === 'reminders'
+              ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400'
+          }`}
+        >
+          <Bell className="w-4 h-4" />
+          <span>Recurring Reminders & Subscriptions</span>
+          {(overdueReminders.length > 0 || dueSoonReminders.length > 0) && (
+            <span className="ml-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-rose-500 text-white animate-pulse">
+              {overdueReminders.length + dueSoonReminders.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Metrics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
               Total Income (Receipts)
             </p>
             <h3 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
               Rs. {totalIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
           </div>
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-            <TrendingDown className="h-6 w-6 rotate-180" />
+          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 rounded-xl">
+            <TrendingUp className="w-6 h-6" />
           </div>
         </div>
 
-        {/* Total Expenses */}
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
               Total Expenses (Payments)
             </p>
             <h3 className="text-2xl font-bold text-rose-600 dark:text-rose-400">
               Rs. {totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
           </div>
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-100 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
-            <TrendingUp className="h-6 w-6" />
+          <div className="p-3 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 rounded-xl">
+            <TrendingDown className="w-6 h-6" />
           </div>
         </div>
 
-        {/* Net Balance */}
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
               Net Balance
             </p>
-            <h3 className={`text-2xl font-bold ${netBalance >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400'}`}>
+            <h3 className={`text-2xl font-bold ${netBalance >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}`}>
               Rs. {netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
           </div>
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400">
-            <Wallet className="h-6 w-6" />
+          <div className="p-3 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 rounded-xl">
+            <Wallet className="w-6 h-6" />
           </div>
         </div>
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row gap-4 items-center justify-between">
-        <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
-          {/* Type Filter Buttons */}
-          <div className="inline-flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-            {(['ALL', 'RECEIPT', 'PAYMENT', 'TRANSFER'] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTypeFilter(t)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  typeFilter === t
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                {t === 'ALL' ? 'All' : t === 'RECEIPT' ? 'Income' : t === 'PAYMENT' ? 'Expense' : 'Transfer'}
-              </button>
-            ))}
-          </div>
-
-          {/* Date Filter */}
-          <select
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value as any)}
-            className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold border-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="all">All Time</option>
-            <option value="today">Today</option>
-            <option value="this_month">This Month</option>
-          </select>
-
-          {/* Category Filter */}
-          <select
-            value={selectedCategoryFilter}
-            onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold border-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="ALL">All Categories</option>
-            {allCategories.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Search Input */}
-        <div className="relative w-full md:w-72">
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-            <Search className="h-4 w-4" />
-          </div>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search transactions..."
-            className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-medium border-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
-      </div>
-
-      {/* Transactions Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
-        {filteredTransactions.length === 0 ? (
-          <div className="p-12 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 mb-3">
-              <DollarSign className="h-6 w-6" />
+      {activeTab === 'transactions' ? (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+          {/* Controls Bar */}
+          <div className="p-4 md:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            {/* Search */}
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search transactions by category, note, amount..."
+                className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-100 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              />
             </div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">No transactions found</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Get started by adding your first income or expense transaction.
-            </p>
-            <button
-              onClick={() => onOpenModal('RECEIPT')}
-              className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-all shadow-sm"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add Transaction
-            </button>
+
+            {/* Filters */}
+            <div className="flex flex-wrap items-center gap-3">
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value as any)}
+                className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-xs font-medium focus:outline-none"
+              >
+                <option value="ALL">All Types</option>
+                <option value="RECEIPT">Receipts Only</option>
+                <option value="PAYMENT">Payments Only</option>
+                <option value="TRANSFER">Transfers Only</option>
+              </select>
+
+              <select
+                value={selectedCategoryFilter}
+                onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+                className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-xs font-medium focus:outline-none"
+              >
+                <option value="ALL">All Categories</option>
+                {allCategories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value as any)}
+                className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-xs font-medium focus:outline-none"
+              >
+                <option value="all">All Dates</option>
+                <option value="today">Today</option>
+                <option value="this_month">This Month</option>
+              </select>
+
+              <button
+                onClick={handleExportCSV}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition"
+                title="Export Filtered CSV"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export CSV</span>
+              </button>
+            </div>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Description / Party</th>
-                  <th className="py-3 px-4">Payment Method</th>
-                  <th className="py-3 px-4 text-right">Amount (Rs.)</th>
-                  <th className="py-3 px-4 text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                {filteredTransactions.map((tx) => {
-                  const isIncome = tx.type === 'RECEIPT';
-                  const isExpense = tx.type === 'PAYMENT';
-                  return (
-                    <tr
-                      key={tx.id}
-                      className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors group"
-                    >
-                      <td className="py-3.5 px-4">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                            isIncome
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                              : isExpense
-                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
-                              : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
-                          }`}
-                        >
-                          {isIncome ? <ArrowDownLeft className="h-3 w-3" /> : isExpense ? <ArrowUpRight className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" />}
-                          {tx.type}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                        {tx.transactionDate}
-                      </td>
-                      <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white">
-                        {tx.category}
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300 max-w-xs truncate">
-                        {tx.description || <span className="text-slate-400 italic">No description</span>}
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300">
-                        <span className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 font-medium">
-                          {tx.paymentMethod}
-                        </span>
-                      </td>
-                      <td className={`py-3.5 px-4 text-right font-bold text-sm whitespace-nowrap ${
-                        isIncome ? 'text-emerald-600 dark:text-emerald-400' : isExpense ? 'text-rose-600 dark:text-rose-400' : 'text-blue-600 dark:text-blue-400'
-                      }`}>
-                        {isIncome ? '+' : isExpense ? '-' : ''}Rs. {tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => onOpenModal(tx.type, tx)}
-                            title="Edit Transaction"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors"
+
+          {/* Transactions Table */}
+          {filteredTransactions.length === 0 ? (
+            <div className="py-16 text-center">
+              <Wallet className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-700 mb-3" />
+              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">No transactions found</h3>
+              <p className="text-xs text-slate-400 mt-1">Try adjusting your filters or record your first receipt/payment.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    <th className="py-3 px-4">Type</th>
+                    <th className="py-3 px-4">Date</th>
+                    <th className="py-3 px-4">Category</th>
+                    <th className="py-3 px-4">Description / Party</th>
+                    <th className="py-3 px-4">Payment Method</th>
+                    <th className="py-3 px-4 text-right">Amount (Rs.)</th>
+                    <th className="py-3 px-4 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                  {filteredTransactions.map((tx) => {
+                    const isIncome = tx.type === 'RECEIPT';
+                    const isExpense = tx.type === 'PAYMENT';
+                    return (
+                      <tr
+                        key={tx.id}
+                        className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors group"
+                      >
+                        <td className="py-3.5 px-4">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                              isIncome
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                : isExpense
+                                ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                                : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
+                            }`}
                           >
-                            <Edit3 className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (confirm('Are you sure you want to delete this transaction?')) {
-                                onDeleteTransaction(tx.id);
-                              }
-                            }}
-                            title="Delete Transaction"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            {isIncome ? <ArrowDownLeft className="h-3 w-3" /> : isExpense ? <ArrowUpRight className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" />}
+                            {tx.type}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                          {tx.transactionDate}
+                        </td>
+                        <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white">
+                          {tx.category}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300 max-w-xs truncate">
+                          {tx.description || <span className="text-slate-400 italic">No description</span>}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300">
+                          <span className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 font-medium">
+                            {tx.paymentMethod}
+                          </span>
+                        </td>
+                        <td className={`py-3.5 px-4 text-right font-bold text-sm whitespace-nowrap ${
+                          isIncome ? 'text-emerald-600 dark:text-emerald-400' : isExpense ? 'text-rose-600 dark:text-rose-400' : 'text-blue-600 dark:text-blue-400'
+                        }`}>
+                          {isIncome ? '+' : isExpense ? '-' : ''}Rs. {tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => onOpenModal(tx.type, tx)}
+                              title="Edit Transaction"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors"
+                            >
+                              <Edit3 className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm('Are you sure you want to delete this transaction?')) {
+                                  onDeleteTransaction(tx.id);
+                                }
+                              }}
+                              title="Delete Transaction"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Recurring Reminders Tab */
+        <div className="space-y-6">
+          {/* Group: Overdue */}
+          {overdueReminders.length > 0 && (
+            <div className="bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 rounded-2xl p-5 shadow-xs">
+              <div className="flex items-center gap-2 mb-4 text-rose-700 dark:text-rose-300 font-semibold text-sm">
+                <AlertTriangle className="w-4 h-4" />
+                <span>Overdue ({overdueReminders.length})</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {overdueReminders.map((rem) => (
+                  <ReminderCard
+                    key={rem.id}
+                    reminder={rem}
+                    statusColor="border-rose-300 dark:border-rose-800 bg-white dark:bg-slate-900"
+                    onMarkPaid={() => onMarkReminderAsPaid(rem)}
+                    onEdit={() => onOpenReminderModal(rem)}
+                    onDelete={() => onDeleteReminder(rem.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Group: Due Soon */}
+          {dueSoonReminders.length > 0 && (
+            <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-2xl p-5 shadow-xs">
+              <div className="flex items-center gap-2 mb-4 text-amber-700 dark:text-amber-300 font-semibold text-sm">
+                <Clock className="w-4 h-4" />
+                <span>Due Soon ({dueSoonReminders.length})</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {dueSoonReminders.map((rem) => (
+                  <ReminderCard
+                    key={rem.id}
+                    reminder={rem}
+                    statusColor="border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900"
+                    onMarkPaid={() => onMarkReminderAsPaid(rem)}
+                    onEdit={() => onOpenReminderModal(rem)}
+                    onDelete={() => onDeleteReminder(rem.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Group: Upcoming / Active */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-semibold text-sm">
+                <Bell className="w-4 h-4 text-indigo-600" />
+                <span>Upcoming & Subscriptions ({upcomingReminders.length})</span>
+              </div>
+            </div>
+
+            {upcomingReminders.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 dark:text-slate-500 text-xs">
+                No upcoming recurring reminders. Click 'New Recurring Reminder' above to add one.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {upcomingReminders.map((rem) => (
+                  <ReminderCard
+                    key={rem.id}
+                    reminder={rem}
+                    statusColor="border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                    onMarkPaid={() => onMarkReminderAsPaid(rem)}
+                    onEdit={() => onOpenReminderModal(rem)}
+                    onDelete={() => onDeleteReminder(rem.id)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+interface ReminderCardProps {
+  reminder: TransactionReminder;
+  statusColor: string;
+  onMarkPaid: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+const ReminderCard: React.FC<ReminderCardProps> = ({
+  reminder,
+  statusColor,
+  onMarkPaid,
+  onEdit,
+  onDelete,
+}) => {
+  return (
+    <div className={`p-4 rounded-xl border ${statusColor} shadow-xs flex flex-col justify-between transition hover:shadow-md`}>
+      <div>
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <h4 className="font-bold text-slate-900 dark:text-white text-base">
+            {reminder.title}
+          </h4>
+          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
+            {reminder.frequency}
+          </span>
+        </div>
+
+        <div className="text-xl font-extrabold text-slate-900 dark:text-white mb-3">
+          Rs. {reminder.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </div>
+
+        <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400 mb-4">
+          <div className="flex items-center justify-between">
+            <span>Next Due Date:</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">{reminder.nextDueDate}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Category:</span>
+            <span className="font-medium text-slate-700 dark:text-slate-300">{reminder.category}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Payment Method:</span>
+            <span className="font-medium text-slate-700 dark:text-slate-300">{reminder.paymentMethod}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+        <button
+          onClick={onMarkPaid}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition"
+        >
+          <Check className="w-3.5 h-3.5" />
+          <span>Mark as Paid</span>
+        </button>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onEdit}
+            title="Edit Reminder"
+            className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-lg transition"
+          >
+            <Edit3 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => {
+              if (confirm('Are you sure you want to delete this reminder?')) {
+                onDelete();
+              }
+            }}
+            title="Delete Reminder"
+            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   );

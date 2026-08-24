@@ -7,6 +7,8 @@ export type TaskPriority = 'high' | 'medium' | 'low';
 
 export type TransactionType = 'RECEIPT' | 'PAYMENT' | 'TRANSFER';
 
+export type ReminderFrequency = 'WEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'YEARLY';
+
 export interface UserTransaction {
   id: string;
   userId: string;
@@ -17,6 +19,20 @@ export interface UserTransaction {
   description?: string;
   transactionDate: string; // YYYY-MM-DD
   createdAt?: string;
+}
+
+export interface TransactionReminder {
+  id: string;
+  userId: string;
+  title: string;
+  amount: number;
+  frequency: ReminderFrequency;
+  nextDueDate: string; // YYYY-MM-DD
+  remindDaysBefore: number;
+  category: string;
+  paymentMethod: string;
+  isActive: boolean;
+  createdAt: string;
 }
 
 export type SoundProfile = 'chime' | 'pulse' | 'fanfare' | 'marimba';

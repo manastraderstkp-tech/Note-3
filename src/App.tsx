@@ -22,10 +22,11 @@ import { PersonalSpaceView } from './components/PersonalSpaceView';
 import { FileManager } from './components/FileManager';
 import { TransactionsView } from './components/TransactionsView';
 import { TransactionModal } from './components/TransactionModal';
+import { ReminderModal } from './components/ReminderModal';
 import { TrashSection } from './components/TrashSection';
 import { AccountView } from './components/AccountView';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
-import { Note, TodoTask, Folder, UserFile, UserTransaction, TransactionType, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole, TrashItem, TrashItemType } from './types';
+import { Note, TodoTask, Folder, UserFile, UserTransaction, TransactionReminder, TransactionType, NavSection, MetricStats, TaskStatus, UserSession, ActiveReminderAlert, SoundProfile, UserRole, TrashItem, TrashItemType } from './types';
 import { INITIAL_NOTES, INITIAL_TODOS } from './data/initialData';
 import {
   getCurrentStoredUser,
@@ -54,6 +55,11 @@ import {
   syncSaveTransaction,
   syncDeleteTransaction,
   subscribeToTransactions,
+  syncFetchReminders,
+  syncSaveReminder,
+  syncDeleteReminder,
+  subscribeToReminders,
+  calculateNextDueDate,
 } from './lib/supabase';
 import {
   playAlertSound,
@@ -150,10 +156,14 @@ export default function App() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [files, setFiles] = useState<UserFile[]>([]);
   const [transactions, setTransactions] = useState<UserTransaction[]>([]);
+  const [reminders, setReminders] = useState<TransactionReminder[]>([]);
 
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<UserTransaction | null>(null);
   const [transactionDefaultType, setTransactionDefaultType] = useState<TransactionType>('RECEIPT');
+
+  const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+  const [editingReminder, setEditingReminder] = useState<TransactionReminder | null>(null);
 
   // Trash State
   const [trashItems, setTrashItems] = useState<TrashItem[]>(() => {
@@ -287,12 +297,13 @@ export default function App() {
   const loadUserData = useCallback(async (user: UserSession) => {
     setIsSyncing(true);
     try {
-      const [notesRes, todosRes, foldersRes, filesRes, txRes] = await Promise.all([
+      const [notesRes, todosRes, foldersRes, filesRes, txRes, remRes] = await Promise.all([
         syncFetchNotes(user.id),
         syncFetchTodos(user.id),
         syncFetchFolders(user.id),
         syncFetchFiles(user.id),
         syncFetchTransactions(user.id),
+        syncFetchReminders(user.id),
       ]);
 
       setNotes(notesRes.notes);
@@ -300,8 +311,9 @@ export default function App() {
       setFolders(foldersRes.folders);
       setFiles(filesRes.files);
       setTransactions(txRes.transactions);
+      setReminders(remRes.reminders);
 
-      if (notesRes.isCloud || todosRes.isCloud || foldersRes.isCloud || filesRes.isCloud || txRes.isCloud) {
+      if (notesRes.isCloud || todosRes.isCloud || foldersRes.isCloud || filesRes.isCloud || txRes.isCloud || remRes.isCloud) {
         setSyncStatusText('Cloud Connected • Supabase Live Sync');
       } else {
         setSyncStatusText('User-Isolated Local Space');
@@ -323,6 +335,7 @@ export default function App() {
       setFolders([]);
       setFiles([]);
       setTransactions([]);
+      setReminders([]);
     }
   }, [currentUser, loadUserData]);
 
@@ -342,6 +355,29 @@ export default function App() {
       },
       (deletedId) => {
         setTransactions((prev) => prev.filter((t) => t.id !== deletedId));
+      }
+    );
+    return () => {
+      unsubscribe();
+    };
+  }, [currentUser]);
+
+  // Supabase Realtime Subscription for Reminders
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsubscribe = subscribeToReminders(
+      currentUser.id,
+      (newRem) => {
+        setReminders((prev) => {
+          if (prev.some((r) => r.id === newRem.id)) return prev;
+          return [newRem, ...prev];
+        });
+      },
+      (updatedRem) => {
+        setReminders((prev) => prev.map((r) => (r.id === updatedRem.id ? updatedRem : r)));
+      },
+      (deletedId) => {
+        setReminders((prev) => prev.filter((r) => r.id !== deletedId));
       }
     );
     return () => {
@@ -812,6 +848,81 @@ export default function App() {
     setIsTransactionModalOpen(true);
   };
 
+  // Reminder CRUD & Mark as Paid Operations
+  const handleSaveReminder = async (remData: TransactionReminder) => {
+    if (!currentUser) {
+      showToast('You must be signed in to save reminders.', 'error');
+      return { success: false, error: 'User session not found' };
+    }
+
+    const res = await syncSaveReminder(currentUser.id, remData);
+    if (res.error) {
+      showToast(`Failed to save reminder: ${res.error}`, 'error');
+      return { success: false, error: res.error };
+    }
+
+    const saved = res.data || remData;
+    setReminders((prev) => {
+      const idx = prev.findIndex((r) => r.id === saved.id);
+      if (idx !== -1) {
+        const copy = [...prev];
+        copy[idx] = saved;
+        return copy;
+      }
+      return [saved, ...prev];
+    });
+
+    showToast('Recurring reminder saved successfully', 'success');
+    return { success: true };
+  };
+
+  const handleDeleteReminder = async (id: string) => {
+    if (!currentUser) return;
+    await syncDeleteReminder(currentUser.id, id);
+    setReminders((prev) => prev.filter((r) => r.id !== id));
+    showToast('Recurring reminder deleted', 'info');
+  };
+
+  const handleOpenReminderModal = (rem: TransactionReminder | null = null) => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      return;
+    }
+    setEditingReminder(rem);
+    setIsReminderModalOpen(true);
+  };
+
+  const handleMarkReminderAsPaid = async (rem: TransactionReminder) => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const txResult = await handleSaveTransaction({
+      type: 'PAYMENT',
+      category: rem.category || 'Rent',
+      amount: rem.amount,
+      paymentMethod: rem.paymentMethod || 'Bank Transfer',
+      description: `Paid: ${rem.title} (${rem.frequency})`,
+      transactionDate: todayStr,
+    });
+
+    if (!txResult.success) {
+      showToast('Failed to record transaction payment', 'error');
+      return;
+    }
+
+    const nextDue = calculateNextDueDate(rem.nextDueDate, rem.frequency);
+    const updatedReminder: TransactionReminder = {
+      ...rem,
+      nextDueDate: nextDue,
+    };
+
+    await handleSaveReminder(updatedReminder);
+    showToast(`Marked "${rem.title}" as paid! Next due date: ${nextDue}`, 'success');
+  };
+
   // Folder & File CRUD Operations with Supabase Sync
   const handleCreateFolder = async (
     name: string,
@@ -1144,8 +1255,12 @@ export default function App() {
             {activeSection === 'transactions' && (
               <TransactionsView
                 transactions={transactions}
+                reminders={reminders}
                 onOpenModal={handleOpenTransactionModal}
                 onDeleteTransaction={handleDeleteTransaction}
+                onOpenReminderModal={handleOpenReminderModal}
+                onDeleteReminder={handleDeleteReminder}
+                onMarkReminderAsPaid={handleMarkReminderAsPaid}
                 syncStatusText={syncStatusText}
               />
             )}
@@ -1299,6 +1414,18 @@ export default function App() {
         onSave={handleSaveTransaction}
         initialTransaction={editingTransaction}
         defaultType={transactionDefaultType}
+      />
+
+      {/* Reminder Form Modal */}
+      <ReminderModal
+        isOpen={isReminderModalOpen}
+        onClose={() => {
+          setIsReminderModalOpen(false);
+          setEditingReminder(null);
+        }}
+        onSave={handleSaveReminder}
+        initialReminder={editingReminder}
+        userId={currentUser?.id || 'demo-user'}
       />
     </div>
   );

@@ -10,6 +10,8 @@ import {
   Folder,
   UserFile,
   UserTransaction,
+  TransactionReminder,
+  ReminderFrequency,
   UserSession,
   UserRole,
   UserProfile,
@@ -1659,6 +1661,303 @@ export function subscribeToTransactions(
 }
 
 // -----------------------------------------------------------------------------
+// Transaction Reminders Operations
+// -----------------------------------------------------------------------------
+
+export const getUserRemindersKey = (userId: string) => `ws_reminders_${userId}`;
+
+export function calculateNextDueDate(currentDateStr: string, frequency: ReminderFrequency): string {
+  const parts = currentDateStr.split('-');
+  if (parts.length !== 3) return currentDateStr;
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+  const date = new Date(year, month, day);
+
+  if (frequency === 'WEEKLY') {
+    date.setDate(date.getDate() + 7);
+  } else if (frequency === 'MONTHLY') {
+    date.setMonth(date.getMonth() + 1);
+  } else if (frequency === 'QUARTERLY') {
+    date.setMonth(date.getMonth() + 3);
+  } else if (frequency === 'YEARLY') {
+    date.setFullYear(date.getFullYear() + 1);
+  }
+
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export async function syncFetchReminders(
+  inputUserId?: string | null
+): Promise<{ reminders: TransactionReminder[]; isCloud: boolean }> {
+  const client = getSupabase();
+  let userId = inputUserId;
+  if (client) {
+    try {
+      const { data: { user } } = await client.auth.getUser();
+      userId = user ? user.id : (inputUserId || 'demo-user');
+    } catch {
+      userId = inputUserId || 'demo-user';
+    }
+  } else {
+    userId = inputUserId || 'demo-user';
+  }
+
+  const localKey = getUserRemindersKey(userId);
+
+  if (client) {
+    try {
+      const { data, error } = await client
+        .from('transaction_reminders')
+        .select('*')
+        .eq('user_id', userId)
+        .order('next_due_date', { ascending: true });
+
+      if (!error && data) {
+        const mapped: TransactionReminder[] = data.map((row: any) => ({
+          id: row.id,
+          userId: row.user_id || userId,
+          title: row.title || '',
+          amount: Number(row.amount) || 0,
+          frequency: row.frequency || 'MONTHLY',
+          nextDueDate: row.next_due_date || new Date().toISOString().split('T')[0],
+          remindDaysBefore: row.remind_days_before ?? 3,
+          category: row.category || 'General',
+          paymentMethod: row.payment_method || 'Cash',
+          isActive: row.is_active ?? true,
+          createdAt: row.created_at || new Date().toISOString(),
+        }));
+
+        try {
+          localStorage.setItem(localKey, JSON.stringify(mapped));
+        } catch (e) {
+          console.warn('Failed to cache reminders locally', e);
+        }
+
+        return { reminders: mapped, isCloud: true };
+      }
+    } catch (e) {
+      console.warn('Exception during syncFetchReminders, falling back to local:', e);
+    }
+  }
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      return { reminders: JSON.parse(raw), isCloud: false };
+    }
+  } catch (e) {
+    console.error('Error parsing local reminders', e);
+  }
+
+  return { reminders: [], isCloud: false };
+}
+
+export async function syncSaveReminder(
+  inputUserId: string | null | undefined,
+  rem: TransactionReminder
+): Promise<{ data: TransactionReminder | null; error: string | null }> {
+  const client = getSupabase();
+  let userId = inputUserId;
+  if (client) {
+    try {
+      const { data: { user } } = await client.auth.getUser();
+      userId = user ? user.id : (inputUserId || 'demo-user');
+    } catch {
+      userId = inputUserId || 'demo-user';
+    }
+  } else {
+    userId = inputUserId || 'demo-user';
+  }
+
+  const localKey = getUserRemindersKey(userId);
+
+  if (client) {
+    try {
+      const payload: Record<string, any> = {
+        user_id: userId,
+        title: rem.title || 'Reminder',
+        amount: Number(rem.amount) || 0,
+        frequency: rem.frequency || 'MONTHLY',
+        next_due_date: rem.nextDueDate || new Date().toISOString().split('T')[0],
+        remind_days_before: rem.remindDaysBefore ?? 3,
+        category: rem.category || 'General',
+        payment_method: rem.paymentMethod || 'Cash',
+        is_active: rem.isActive ?? true,
+      };
+      if (rem.id && isValidUUID(rem.id)) {
+        payload.id = rem.id;
+      } else if (rem.id) {
+        payload.id = rem.id;
+      }
+
+      const { data, error } = await client
+        .from('transaction_reminders')
+        .upsert(payload, { onConflict: 'id' })
+        .select()
+        .single();
+
+      if (!error && data) {
+        const saved: TransactionReminder = {
+          id: data.id,
+          userId: data.user_id || userId,
+          title: data.title || '',
+          amount: Number(data.amount) || 0,
+          frequency: data.frequency || 'MONTHLY',
+          nextDueDate: data.next_due_date || rem.nextDueDate,
+          remindDaysBefore: data.remind_days_before ?? 3,
+          category: data.category || 'General',
+          paymentMethod: data.payment_method || 'Cash',
+          isActive: data.is_active ?? true,
+          createdAt: data.created_at || rem.createdAt,
+        };
+
+        try {
+          const raw = localStorage.getItem(localKey);
+          const list: TransactionReminder[] = raw ? JSON.parse(raw) : [];
+          const idx = list.findIndex((r) => r.id === saved.id || r.id === rem.id);
+          if (idx !== -1) list[idx] = saved;
+          else list.unshift(saved);
+          localStorage.setItem(localKey, JSON.stringify(list));
+        } catch (e) {
+          console.warn('Error caching reminder locally', e);
+        }
+
+        return { data: saved, error: null };
+      } else if (error) {
+        console.warn('Supabase reminder save error:', error.message);
+        return { data: null, error: error.message };
+      }
+    } catch (e: any) {
+      console.warn('Exception saving reminder in Supabase:', e);
+      return { data: null, error: e?.message || 'Failed to save reminder to Supabase' };
+    }
+  }
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    const list: TransactionReminder[] = raw ? JSON.parse(raw) : [];
+    const idx = list.findIndex((r) => r.id === rem.id);
+    if (idx !== -1) list[idx] = rem;
+    else list.unshift(rem);
+    localStorage.setItem(localKey, JSON.stringify(list));
+    return { data: rem, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message || 'Failed to save reminder locally' };
+  }
+}
+
+export async function syncDeleteReminder(
+  userId: string,
+  remId: string
+): Promise<boolean> {
+  const client = getSupabase();
+  const localKey = getUserRemindersKey(userId);
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const list: TransactionReminder[] = JSON.parse(raw);
+      localStorage.setItem(localKey, JSON.stringify(list.filter((r) => r.id !== remId)));
+    }
+  } catch (e) {
+    console.warn('Error removing reminder from local cache', e);
+  }
+
+  if (client) {
+    try {
+      await client.from('transaction_reminders').delete().eq('id', remId).eq('user_id', userId);
+    } catch (e) {
+      console.warn('Error deleting reminder from Supabase:', e);
+    }
+  }
+  return true;
+}
+
+export function subscribeToReminders(
+  userId: string,
+  onInsert: (rem: TransactionReminder) => void,
+  onUpdate: (rem: TransactionReminder) => void,
+  onDelete: (remId: string) => void
+): () => void {
+  const client = getSupabase();
+  if (!client) return () => {};
+
+  try {
+    const channelName = `transaction_reminders_channel_${userId}`;
+    const channel = client.channel(channelName);
+
+    channel
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'transaction_reminders', filter: `user_id=eq.${userId}` },
+        (payload: any) => {
+          if (payload.new) {
+            const row = payload.new;
+            const rem: TransactionReminder = {
+              id: row.id,
+              userId: row.user_id,
+              title: row.title,
+              amount: Number(row.amount) || 0,
+              frequency: row.frequency,
+              nextDueDate: row.next_due_date,
+              remindDaysBefore: row.remind_days_before ?? 3,
+              category: row.category,
+              paymentMethod: row.payment_method,
+              isActive: row.is_active ?? true,
+              createdAt: row.created_at,
+            };
+            onInsert(rem);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'transaction_reminders', filter: `user_id=eq.${userId}` },
+        (payload: any) => {
+          if (payload.new) {
+            const row = payload.new;
+            const rem: TransactionReminder = {
+              id: row.id,
+              userId: row.user_id,
+              title: row.title,
+              amount: Number(row.amount) || 0,
+              frequency: row.frequency,
+              nextDueDate: row.next_due_date,
+              remindDaysBefore: row.remind_days_before ?? 3,
+              category: row.category,
+              paymentMethod: row.payment_method,
+              isActive: row.is_active ?? true,
+              createdAt: row.created_at,
+            };
+            onUpdate(rem);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'transaction_reminders', filter: `user_id=eq.${userId}` },
+        (payload: any) => {
+          if (payload.old && payload.old.id) {
+            onDelete(payload.old.id);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  } catch (err) {
+    console.warn('Error setting up reminders realtime subscription:', err);
+    return () => {};
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Folders & Files Operations
 // -----------------------------------------------------------------------------
 
@@ -2368,6 +2667,50 @@ BEGIN
         WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'user_transactions'
     ) THEN
         ALTER PUBLICATION supabase_realtime ADD TABLE public.user_transactions;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        NULL;
+END $$;
+
+-- 6. TRANSACTION REMINDERS TABLE (Recurring Reminders & Subscriptions)
+CREATE TABLE IF NOT EXISTS public.transaction_reminders (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    amount NUMERIC DEFAULT 0,
+    frequency TEXT NOT NULL CHECK (frequency IN ('WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY')),
+    next_due_date DATE DEFAULT CURRENT_DATE,
+    remind_days_before INTEGER DEFAULT 3,
+    category TEXT DEFAULT 'General',
+    payment_method TEXT DEFAULT 'Cash',
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE public.transaction_reminders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Transaction reminders select policy" ON public.transaction_reminders;
+DROP POLICY IF EXISTS "Transaction reminders insert policy" ON public.transaction_reminders;
+DROP POLICY IF EXISTS "Transaction reminders update policy" ON public.transaction_reminders;
+DROP POLICY IF EXISTS "Transaction reminders delete policy" ON public.transaction_reminders;
+
+CREATE POLICY "Transaction reminders select policy" ON public.transaction_reminders FOR SELECT
+    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "Transaction reminders insert policy" ON public.transaction_reminders FOR INSERT
+    WITH CHECK (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "Transaction reminders update policy" ON public.transaction_reminders FOR UPDATE
+    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+CREATE POLICY "Transaction reminders delete policy" ON public.transaction_reminders FOR DELETE
+    USING (auth.uid()::text = user_id OR user_id = 'demo-user' OR public.is_admin());
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'transaction_reminders'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.transaction_reminders;
     END IF;
 EXCEPTION
     WHEN OTHERS THEN

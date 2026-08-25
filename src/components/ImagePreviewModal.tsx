@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { UserFile } from '../types';
 import { triggerBlobDownload } from '../lib/fileStorage';
+import { FALLBACK_IMAGE_PLACEHOLDER } from './FileManager';
 
 interface ImagePreviewModalProps {
   imageSrc: string;
@@ -413,7 +414,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
         >
           <img
             ref={imageRef}
-            src={currentSrc}
+            src={currentSrc || FALLBACK_IMAGE_PLACEHOLDER}
             alt={fileName}
             style={transformStyle}
             className="max-h-full max-w-full rounded-lg object-contain pointer-events-none select-none shadow-2xl"
@@ -421,6 +422,12 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
             onLoad={(e) => {
               const target = e.currentTarget;
               setImageDimensions({ width: target.naturalWidth, height: target.naturalHeight });
+            }}
+            onError={(e) => {
+              const target = e.currentTarget;
+              if (target.src !== FALLBACK_IMAGE_PLACEHOLDER) {
+                target.src = FALLBACK_IMAGE_PLACEHOLDER;
+              }
             }}
           />
 

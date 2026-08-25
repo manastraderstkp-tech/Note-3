@@ -373,6 +373,10 @@ export const Header: React.FC<HeaderProps> = ({
                     src={currentUser.avatarUrl}
                     alt={currentUser.fullName || 'User'}
                     className="h-full w-full object-cover"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
                   />
                 ) : (
                   <span className="text-xs">{getInitials(currentUser.fullName, currentUser.email)}</span>

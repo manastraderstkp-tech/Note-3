@@ -1102,7 +1102,16 @@ export const NoteModal: React.FC<NoteModalProps> = ({
                     >
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-xs dark:bg-slate-800 overflow-hidden">
                         {(att.url.match(/\.(jpeg|jpg|gif|png)$/i) || att.url.startsWith('data:image')) ? (
-                          <img src={att.url} alt={att.name} className="h-full w-full object-cover" />
+                          <img
+                            src={att.url}
+                            alt={att.name}
+                            className="h-full w-full object-cover"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src =
+                                'https://placehold.co/100x100/1e293b/475569?text=IMG';
+                            }}
+                          />
                         ) : (
                           <Paperclip className="h-4 w-4 text-indigo-500" />
                         )}

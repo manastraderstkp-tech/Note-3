@@ -82,13 +82,27 @@ const isImageFile = (fileType: string, name: string) => {
   return (fileType || '').startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
 };
 
+export const FALLBACK_IMAGE_PLACEHOLDER = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" fill="%23f8fafc"><rect width="400" height="300" fill="%23f1f5f9" rx="8"/><g fill="%2394a3b8" transform="translate(160, 85)"><path d="M40 0C17.9 0 0 17.9 0 40s17.9 40 40 40 40-17.9 40-40S62.1 0 40 0zm0 16c13.3 0 24 10.7 24 24s-10.7 24-24 24S16 53.3 16 40 26.7 16 40 16zM14 62l18-24 14 18 10-13 14 19H14z"/></g><text x="200" y="195" font-family="system-ui, -apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="%2364748b" text-anchor="middle">Image Preview Unavailable</text><text x="200" y="218" font-family="system-ui, -apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="%2394a3b8" text-anchor="middle">Click to view or download</text></svg>`;
+
 interface ImageFileThumbnailProps {
   file: UserFile;
   onPreview: (url: string, name: string, file: UserFile) => void;
 }
 
 const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview }) => {
-  const [resolvedUrl, setResolvedUrl] = useState<string>(file.storageUrl || '');
+  const [resolvedUrl, setResolvedUrl] = useState<string>(() => {
+    if (file.storageUrl && file.storageUrl.startsWith('http')) {
+      return file.storageUrl;
+    }
+    if (file.filePath && !file.filePath.startsWith('local/')) {
+      const client = getSupabase();
+      if (client) {
+        const { data } = client.storage.from('files').getPublicUrl(file.filePath);
+        if (data?.publicUrl) return data.publicUrl;
+      }
+    }
+    return file.storageUrl || '';
+  });
   const [isBlobCreated, setIsBlobCreated] = useState(false);
   const [errorRetried, setErrorRetried] = useState(false);
   const fileStyle = getFileIcon(file.fileType, file.name);
@@ -99,28 +113,7 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
     let localBlobUrl = '';
 
     const checkAndResolve = async () => {
-      // 1. If we have a working non-blob HTTP url, try it first
-      if (file.storageUrl && file.storageUrl.startsWith('http')) {
-        setResolvedUrl(file.storageUrl);
-        return;
-      }
-
-      // 2. Check IndexedDB binary cache for offline/persisted blob
-      if (file.id) {
-        try {
-          const blob = await getLocalFileBlob(file.id);
-          if (blob && isMounted) {
-            localBlobUrl = URL.createObjectURL(blob);
-            setResolvedUrl(localBlobUrl);
-            setIsBlobCreated(true);
-            return;
-          }
-        } catch (e) {
-          console.warn('Error loading blob for thumbnail:', e);
-        }
-      }
-
-      // 3. Fallback to Supabase getPublicUrl if filePath is available
+      // 1. Permanent Public URL format from Supabase Storage
       if (file.filePath && !file.filePath.startsWith('local/')) {
         try {
           const client = getSupabase();
@@ -133,6 +126,27 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
           }
         } catch {
           // ignore
+        }
+      }
+
+      // 2. If we have a working non-blob HTTP url, try it
+      if (file.storageUrl && file.storageUrl.startsWith('http')) {
+        setResolvedUrl(file.storageUrl);
+        return;
+      }
+
+      // 3. Check IndexedDB binary cache for offline/persisted blob
+      if (file.id) {
+        try {
+          const blob = await getLocalFileBlob(file.id);
+          if (blob && isMounted) {
+            localBlobUrl = URL.createObjectURL(blob);
+            setResolvedUrl(localBlobUrl);
+            setIsBlobCreated(true);
+            return;
+          }
+        } catch (e) {
+          console.warn('Error loading blob for thumbnail:', e);
         }
       }
 
@@ -155,9 +169,12 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
     };
   }, [file.id, file.storageUrl, file.filePath]);
 
-  const handleImageError = async () => {
+  const handleImageError = async (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    const target = e.currentTarget;
     if (errorRetried) {
-      setResolvedUrl('');
+      if (target.src !== FALLBACK_IMAGE_PLACEHOLDER) {
+        target.src = FALLBACK_IMAGE_PLACEHOLDER;
+      }
       return;
     }
     setErrorRetried(true);
@@ -177,7 +194,7 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
       }
     }
 
-    // 2. Try fetching publicUrl from 'files' or 'user_files' bucket directly
+    // 2. Try fetching publicUrl directly from 'files' bucket
     if (file.filePath && !file.filePath.startsWith('local/')) {
       try {
         const client = getSupabase();
@@ -198,17 +215,16 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
       }
     }
 
-    setResolvedUrl('');
+    // 3. Set fallback placeholder image if public URL and cache fail
+    if (target.src !== FALLBACK_IMAGE_PLACEHOLDER) {
+      target.src = FALLBACK_IMAGE_PLACEHOLDER;
+    }
   };
-
-  if (!resolvedUrl) {
-    return <IconComp className={`h-12 w-12 ${fileStyle.color}`} />;
-  }
 
   return (
     <>
       <img
-        src={resolvedUrl}
+        src={resolvedUrl || FALLBACK_IMAGE_PLACEHOLDER}
         alt={file.name}
         className="h-full w-full object-cover transition group-hover:scale-105"
         referrerPolicy="no-referrer"
@@ -216,7 +232,7 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
       />
       <button
         type="button"
-        onClick={() => onPreview(resolvedUrl, file.name, file)}
+        onClick={() => onPreview(resolvedUrl || FALLBACK_IMAGE_PLACEHOLDER, file.name, file)}
         className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition text-white"
         title="Preview image"
       >

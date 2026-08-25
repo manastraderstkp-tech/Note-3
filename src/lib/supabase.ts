@@ -2481,6 +2481,14 @@ export async function syncUploadFile(
         publicUrl = urlData?.publicUrl || '';
       }
 
+      // Permanent Public URL format directly from 'files' bucket
+      if (!publicUrl && storagePath) {
+        const { data: filesUrlData } = client.storage
+          .from('files')
+          .getPublicUrl(storagePath);
+        publicUrl = filesUrlData?.publicUrl || '';
+      }
+
       if (!publicUrl) {
         try {
           publicUrl = URL.createObjectURL(file);
@@ -2623,17 +2631,27 @@ export async function syncFetchFiles(
       const { data, error } = await query;
 
       if (!error && data) {
-        const mappedFiles: UserFile[] = data.map((row: any) => ({
-          id: row.id,
-          userId: row.user_id || userId,
-          folderId: row.folder_id || null,
-          name: row.name || 'Unnamed File',
-          filePath: row.file_path || '',
-          fileType: row.file_type || 'application/octet-stream',
-          fileSize: Number(row.file_size || 0),
-          storageUrl: row.storage_url || '',
-          createdAt: row.created_at || new Date().toISOString(),
-        }));
+        const mappedFiles: UserFile[] = data.map((row: any) => {
+          let resolvedStorageUrl = row.storage_url || '';
+          if ((!resolvedStorageUrl || resolvedStorageUrl.startsWith('blob:')) && row.file_path && client) {
+            const { data: pubData } = client.storage.from('files').getPublicUrl(row.file_path);
+            if (pubData?.publicUrl) {
+              resolvedStorageUrl = pubData.publicUrl;
+            }
+          }
+
+          return {
+            id: row.id,
+            userId: row.user_id || userId,
+            folderId: row.folder_id || null,
+            name: row.name || 'Unnamed File',
+            filePath: row.file_path || '',
+            fileType: row.file_type || 'application/octet-stream',
+            fileSize: Number(row.file_size || 0),
+            storageUrl: resolvedStorageUrl,
+            createdAt: row.created_at || new Date().toISOString(),
+          };
+        });
 
         try {
           if (folderId === undefined) {
@@ -2827,6 +2845,22 @@ export async function syncDownloadFile(file: {
     success: false,
     error: 'File source could not be retrieved. Please re-upload this file.',
   };
+}
+
+/**
+ * Returns the permanent public URL for a storage file path.
+ * Avoids temporary signed tokens or session-bound relative URLs.
+ */
+export function getPermanentPublicUrl(filePath: string, bucket = 'files'): string {
+  if (!filePath || filePath.startsWith('local/')) return '';
+  const client = getSupabase();
+  if (!client) return '';
+  try {
+    const { data } = client.storage.from(bucket).getPublicUrl(filePath);
+    return data?.publicUrl || '';
+  } catch {
+    return '';
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -3132,25 +3166,29 @@ EXCEPTION
         NULL;
 END $$;
 
--- 6. STORAGE BUCKETS (Avatars & User Files)
+-- 6. STORAGE BUCKETS (Avatars, Files, & User Files)
 INSERT INTO storage.buckets (id, name, public) 
-VALUES ('avatars', 'avatars', true)
-ON CONFLICT (id) DO NOTHING;
+VALUES ('files', 'files', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
 
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('user_files', 'user_files', true)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET public = true;
 
--- Storage Policies for Avatars & User Files
-DROP POLICY IF EXISTS "Avatar Public Access" ON storage.objects;
-DROP POLICY IF EXISTS "Avatar User Insert" ON storage.objects;
-DROP POLICY IF EXISTS "Avatar User Update" ON storage.objects;
-DROP POLICY IF EXISTS "Avatar User Delete" ON storage.objects;
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
 
-CREATE POLICY "Avatar Public Access" ON storage.objects FOR SELECT USING (bucket_id = 'avatars' OR bucket_id = 'user_files');
-CREATE POLICY "Avatar User Insert" ON storage.objects FOR INSERT WITH CHECK ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
-CREATE POLICY "Avatar User Update" ON storage.objects FOR UPDATE USING ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
-CREATE POLICY "Avatar User Delete" ON storage.objects FOR DELETE USING ((bucket_id = 'avatars' OR bucket_id = 'user_files') AND auth.uid() IS NOT NULL);
+-- Storage Policies for Avatars, Files & User Files (Public Read for unauthenticated/incognito access)
+DROP POLICY IF EXISTS "Public Read Files Access" ON storage.objects;
+DROP POLICY IF EXISTS "User Files Insert" ON storage.objects;
+DROP POLICY IF EXISTS "User Files Update" ON storage.objects;
+DROP POLICY IF EXISTS "User Files Delete" ON storage.objects;
+
+CREATE POLICY "Public Read Files Access" ON storage.objects FOR SELECT USING (bucket_id IN ('files', 'user_files', 'avatars'));
+CREATE POLICY "User Files Insert" ON storage.objects FOR INSERT WITH CHECK (bucket_id IN ('files', 'user_files', 'avatars') AND auth.uid() IS NOT NULL);
+CREATE POLICY "User Files Update" ON storage.objects FOR UPDATE USING (bucket_id IN ('files', 'user_files', 'avatars') AND auth.uid() IS NOT NULL);
+CREATE POLICY "User Files Delete" ON storage.objects FOR DELETE USING (bucket_id IN ('files', 'user_files', 'avatars') AND auth.uid() IS NOT NULL);
 
 -- 6. Ensure default admin role
 UPDATE public.profiles

@@ -370,6 +370,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
                       src={avatarUrl}
                       alt={fullName || 'Profile Avatar'}
                       className="h-full w-full object-cover"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
                     />
                   ) : (
                     <span>{getInitials(fullName || currentUser.fullName, currentUser.email)}</span>
@@ -493,6 +497,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
                       src={avatarUrl}
                       alt="Avatar Preview"
                       className="h-full w-full object-cover"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
                     />
                   ) : (
                     <span className="text-base font-black">

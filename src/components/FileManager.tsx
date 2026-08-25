@@ -33,7 +33,7 @@ import {
   X
 } from 'lucide-react';
 import { Folder, UserFile } from '../types';
-import { syncDownloadFile } from '../lib/supabase';
+import { syncDownloadFile, getSupabase } from '../lib/supabase';
 import { getLocalFileBlob, saveLocalFileBlob } from '../lib/fileStorage';
 import { ImagePreviewModal } from './ImagePreviewModal';
 
@@ -90,6 +90,7 @@ interface ImageFileThumbnailProps {
 const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview }) => {
   const [resolvedUrl, setResolvedUrl] = useState<string>(file.storageUrl || '');
   const [isBlobCreated, setIsBlobCreated] = useState(false);
+  const [errorRetried, setErrorRetried] = useState(false);
   const fileStyle = getFileIcon(file.fileType, file.name);
   const IconComp = fileStyle.icon;
 
@@ -98,13 +99,13 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
     let localBlobUrl = '';
 
     const checkAndResolve = async () => {
-      // If we have a working non-blob HTTP url, try it first
+      // 1. If we have a working non-blob HTTP url, try it first
       if (file.storageUrl && file.storageUrl.startsWith('http')) {
         setResolvedUrl(file.storageUrl);
         return;
       }
 
-      // Check IndexedDB binary cache for offline/persisted blob
+      // 2. Check IndexedDB binary cache for offline/persisted blob
       if (file.id) {
         try {
           const blob = await getLocalFileBlob(file.id);
@@ -116,6 +117,22 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
           }
         } catch (e) {
           console.warn('Error loading blob for thumbnail:', e);
+        }
+      }
+
+      // 3. Fallback to Supabase getPublicUrl if filePath is available
+      if (file.filePath && !file.filePath.startsWith('local/')) {
+        try {
+          const client = getSupabase();
+          if (client) {
+            const { data } = client.storage.from('files').getPublicUrl(file.filePath);
+            if (data?.publicUrl && isMounted) {
+              setResolvedUrl(data.publicUrl);
+              return;
+            }
+          }
+        } catch {
+          // ignore
         }
       }
 
@@ -136,14 +153,20 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
         }
       }
     };
-  }, [file.id, file.storageUrl]);
+  }, [file.id, file.storageUrl, file.filePath]);
 
   const handleImageError = async () => {
-    // If the HTTP/Blob URL failed, try pulling from IndexedDB directly
-    if (file.id && !isBlobCreated) {
+    if (errorRetried) {
+      setResolvedUrl('');
+      return;
+    }
+    setErrorRetried(true);
+
+    // 1. Try pulling pure binary blob from IndexedDB cache
+    if (file.id) {
       try {
         const blob = await getLocalFileBlob(file.id);
-        if (blob) {
+        if (blob && blob.size > 0) {
           const newUrl = URL.createObjectURL(blob);
           setResolvedUrl(newUrl);
           setIsBlobCreated(true);
@@ -153,6 +176,28 @@ const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview
         // ignore
       }
     }
+
+    // 2. Try fetching publicUrl from 'files' or 'user_files' bucket directly
+    if (file.filePath && !file.filePath.startsWith('local/')) {
+      try {
+        const client = getSupabase();
+        if (client) {
+          const { data: urlData1 } = client.storage.from('files').getPublicUrl(file.filePath);
+          if (urlData1?.publicUrl && urlData1.publicUrl !== resolvedUrl) {
+            setResolvedUrl(urlData1.publicUrl);
+            return;
+          }
+          const { data: urlData2 } = client.storage.from('user_files').getPublicUrl(file.filePath);
+          if (urlData2?.publicUrl && urlData2.publicUrl !== resolvedUrl) {
+            setResolvedUrl(urlData2.publicUrl);
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     setResolvedUrl('');
   };
 
@@ -745,6 +790,35 @@ export const FileManager: React.FC<FileManagerProps> = ({
           />
         </div>
       </div>
+
+      {/* Uploading Progress Floating Notification Banner */}
+      {isUploading && (
+        <div
+          id="banner-file-uploading-progress"
+          className="flex items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-indigo-50/95 p-4 shadow-lg shadow-indigo-500/10 backdrop-blur-md dark:border-indigo-900/60 dark:bg-indigo-950/90 animate-in fade-in slide-in-from-top-2"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-xs">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-indigo-950 dark:text-indigo-100">
+                  {uploadProgressText || 'Uploading files directly to cloud storage...'}
+                </span>
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+              </div>
+              <p className="text-[11px] text-indigo-700/80 dark:text-indigo-300/80">
+                Direct File/Blob transfer in progress. Please do not close or navigate away.
+              </p>
+            </div>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 rounded-xl bg-white/70 px-3 py-1.5 text-xs font-bold text-indigo-700 shadow-2xs border border-indigo-100 dark:bg-indigo-900/60 dark:text-indigo-200 dark:border-indigo-800">
+            <HardDrive className="h-3.5 w-3.5 animate-pulse" />
+            <span>Syncing</span>
+          </div>
+        </div>
+      )}
 
       {/* Breadcrumbs Navigation & Search/View Controls */}
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-900">

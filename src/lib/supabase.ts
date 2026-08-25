@@ -2446,19 +2446,37 @@ export async function syncUploadFile(
       const targetFolder = folderId && isValidUUID(folderId) ? folderId : 'root';
       const storagePath = `${effectiveUserId}/${targetFolder}/${Date.now()}_${safeName}`;
 
-      // Upload with accurate contentType so Supabase doesn't default to text/plain
-      const { error: uploadError } = await client.storage
-        .from('user_files')
+      // Upload file directly as File / Blob object without base64 conversion
+      let bucketName = 'files';
+      let { error: uploadError } = await client.storage
+        .from(bucketName)
         .upload(storagePath, file, {
           cacheControl: '3600',
           upsert: true,
-          contentType: accurateType,
+          contentType: file.type || accurateType,
         });
+
+      // If 'files' bucket not found or failed, try 'user_files' bucket fallback
+      if (uploadError) {
+        const fallbackBucket = 'user_files';
+        const { error: fallbackError } = await client.storage
+          .from(fallbackBucket)
+          .upload(storagePath, file, {
+            cacheControl: '3600',
+            upsert: true,
+            contentType: file.type || accurateType,
+          });
+
+        if (!fallbackError) {
+          bucketName = fallbackBucket;
+          uploadError = null;
+        }
+      }
 
       let publicUrl = '';
       if (!uploadError) {
         const { data: urlData } = client.storage
-          .from('user_files')
+          .from(bucketName)
           .getPublicUrl(storagePath);
         publicUrl = urlData?.publicUrl || '';
       }
@@ -2681,6 +2699,7 @@ export async function syncDeleteFile(
   if (client) {
     try {
       if (filePath && !filePath.startsWith('local/')) {
+        await client.storage.from('files').remove([filePath]);
         await client.storage.from('user_files').remove([filePath]);
       }
       if (isValidUUID(fileId)) {
@@ -2718,10 +2737,18 @@ export async function syncDownloadFile(file: {
 
   const client = getSupabase();
 
-  // 2. Tier 2: Authenticated Supabase Storage download
+  // 2. Tier 2: Authenticated Supabase Storage download using 'files' (or 'user_files' fallback)
   if (client && file.filePath && !file.filePath.startsWith('local/')) {
     try {
-      const { data, error } = await client.storage.from('user_files').download(file.filePath);
+      let { data, error } = await client.storage.from('files').download(file.filePath);
+      if (error || !data) {
+        const fallbackRes = await client.storage.from('user_files').download(file.filePath);
+        if (!fallbackRes.error && fallbackRes.data) {
+          data = fallbackRes.data;
+          error = null;
+        }
+      }
+
       if (!error && data && data.size > 0) {
         // Cache to IndexedDB for instant future downloads
         if (file.id) {

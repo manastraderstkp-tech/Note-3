@@ -47,6 +47,7 @@ import {
   syncDeleteTodo,
   syncFetchFolders,
   syncCreateFolder,
+  syncUpdateFolder,
   syncDeleteFolder,
   syncUploadFile,
   syncFetchFiles,
@@ -959,6 +960,30 @@ export default function App() {
     return { success: true };
   };
 
+  const handleRenameFolder = async (
+    folderId: string,
+    newName: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) {
+      showToast('You must be signed in to rename folders.', 'error');
+      return { success: false, error: 'User session not found' };
+    }
+
+    const res = await syncUpdateFolder(currentUser.id, folderId, newName);
+    if (res.error) {
+      showToast(res.error, 'error');
+      return { success: false, error: res.error };
+    }
+
+    if (res.data) {
+      setFolders((prev) =>
+        prev.map((f) => (f.id === folderId ? { ...f, name: res.data!.name, updatedAt: res.data!.updatedAt } : f))
+      );
+      showToast(`Folder renamed to "${res.data.name}"`, 'success');
+    }
+    return { success: true };
+  };
+
   const handleDeleteFolder = async (folderId: string) => {
     if (!currentUser) return;
     const folder = folders.find(f => f.id === folderId);
@@ -1267,6 +1292,7 @@ export default function App() {
                 folders={activeFolders}
                 files={activeFiles}
                 onCreateFolder={handleCreateFolder}
+                onRenameFolder={handleRenameFolder}
                 onDeleteFolder={handleDeleteFolder}
                 onUploadFile={handleUploadFile}
                 onDeleteFile={handleDeleteFile}

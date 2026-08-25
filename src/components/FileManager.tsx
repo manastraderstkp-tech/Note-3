@@ -27,7 +27,8 @@ import {
   Plus,
   Loader2,
   Folder as FolderIconClosed,
-  Eye
+  Eye,
+  Edit3
 } from 'lucide-react';
 import { Folder, UserFile } from '../types';
 import { syncDownloadFile } from '../lib/supabase';
@@ -36,6 +37,7 @@ interface FileManagerProps {
   folders: Folder[];
   files: UserFile[];
   onCreateFolder: (name: string, parentId?: string | null) => Promise<{ success: boolean; error?: string }>;
+  onRenameFolder?: (folderId: string, newName: string) => Promise<{ success: boolean; error?: string }>;
   onDeleteFolder: (folderId: string) => Promise<void>;
   onUploadFile: (folderId: string | null, file: File) => Promise<{ success: boolean; error?: string }>;
   onDeleteFile: (fileId: string, filePath: string) => Promise<void>;
@@ -47,6 +49,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
   folders,
   files,
   onCreateFolder,
+  onRenameFolder,
   onDeleteFolder,
   onUploadFile,
   onDeleteFile,
@@ -59,6 +62,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
   const [isNewFolderOpen, setIsNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [isSubmittingFolder, setIsSubmittingFolder] = useState(false);
+  const [editingFolder, setEditingFolder] = useState<Folder | null>(null);
+  const [renameFolderName, setRenameFolderName] = useState('');
+  const [isSubmittingRename, setIsSubmittingRename] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -127,6 +133,28 @@ export const FileManager: React.FC<FileManagerProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // Calculate total size of files inside a folder (including nested subfolders)
+  const getFolderTotalSize = (folderId: string): number => {
+    const directFiles = files.filter((f) => f.folderId === folderId);
+    let total = directFiles.reduce((acc, f) => acc + (f.fileSize || 0), 0);
+    const subFolders = folders.filter((f) => f.parentId === folderId);
+    for (const sf of subFolders) {
+      total += getFolderTotalSize(sf.id);
+    }
+    return total;
+  };
+
+  // Calculate total file count inside a folder (including nested subfolders)
+  const getFolderTotalFilesCount = (folderId: string): number => {
+    const directCount = files.filter((f) => f.folderId === folderId).length;
+    const subFolders = folders.filter((f) => f.parentId === folderId);
+    let total = directCount;
+    for (const sf of subFolders) {
+      total += getFolderTotalFilesCount(sf.id);
+    }
+    return total;
+  };
+
   const formatDate = (iso: string) => {
     try {
       return new Date(iso).toLocaleDateString('en-US', {
@@ -187,6 +215,27 @@ export const FileManager: React.FC<FileManagerProps> = ({
       onShowToast('Folder created successfully', 'success');
     } else {
       onShowToast(res.error || 'Failed to create folder', 'error');
+    }
+  };
+
+  // Handle Rename/Edit Folder Submission
+  const handleRenameFolderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFolder || !renameFolderName.trim()) return;
+
+    setIsSubmittingRename(true);
+    if (onRenameFolder) {
+      const res = await onRenameFolder(editingFolder.id, renameFolderName.trim());
+      setIsSubmittingRename(false);
+      if (res.success) {
+        setEditingFolder(null);
+        setRenameFolderName('');
+      } else {
+        onShowToast(res.error || 'Failed to rename folder', 'error');
+      }
+    } else {
+      setIsSubmittingRename(false);
+      setEditingFolder(null);
     }
   };
 
@@ -498,6 +547,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
             {filteredFolders.map((folder) => {
               const childFilesCount = files.filter((f) => f.folderId === folder.id).length;
               const childFoldersCount = folders.filter((f) => f.parentId === folder.id).length;
+              const folderTotalSize = getFolderTotalSize(folder.id);
 
               return (
                 <div
@@ -505,36 +555,64 @@ export const FileManager: React.FC<FileManagerProps> = ({
                   onClick={() => setCurrentFolderId(folder.id)}
                   className="group relative flex cursor-pointer items-center justify-between rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs transition-all hover:border-indigo-300 hover:shadow-md hover:shadow-indigo-500/5 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-700"
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-500 group-hover:scale-105 transition dark:bg-amber-950/40 dark:text-amber-400">
                       <FolderOpen className="h-5 w-5" />
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <h4 className="truncate text-sm font-bold text-slate-800 group-hover:text-indigo-600 dark:text-slate-200 dark:group-hover:text-indigo-400">
                         {folder.name}
                       </h4>
-                      <p className="text-[11px] text-slate-400">
-                        {childFilesCount} file{childFilesCount !== 1 ? 's' : ''}
-                        {childFoldersCount > 0 ? ` • ${childFoldersCount} subfolder${childFoldersCount !== 1 ? 's' : ''}` : ''}
+                      <p className="flex flex-wrap items-center gap-1 text-[11px] text-slate-400">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {formatBytes(folderTotalSize)}
+                        </span>
+                        <span>•</span>
+                        <span>
+                          {childFilesCount} file{childFilesCount !== 1 ? 's' : ''}
+                        </span>
+                        {childFoldersCount > 0 && (
+                          <>
+                            <span>•</span>
+                            <span>
+                              {childFoldersCount} subfolder{childFoldersCount !== 1 ? 's' : ''}
+                            </span>
+                          </>
+                        )}
                       </p>
                     </div>
                   </div>
 
-                  <button
-                    id={`btn-delete-folder-${folder.id}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteTarget({
-                        type: 'folder',
-                        id: folder.id,
-                        name: folder.name,
-                      });
-                    }}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 transition dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
-                    title="Delete folder"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-0.5 shrink-0 ml-2">
+                    <button
+                      id={`btn-edit-folder-${folder.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingFolder(folder);
+                        setRenameFolderName(folder.name);
+                      }}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 opacity-80 sm:opacity-0 group-hover:opacity-100 hover:bg-indigo-50 hover:text-indigo-600 transition dark:hover:bg-indigo-950/50 dark:hover:text-indigo-400"
+                      title="Edit / Rename folder"
+                    >
+                      <Edit3 className="h-4 w-4" />
+                    </button>
+
+                    <button
+                      id={`btn-delete-folder-${folder.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteTarget({
+                          type: 'folder',
+                          id: folder.id,
+                          name: folder.name,
+                        });
+                      }}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 opacity-80 sm:opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 transition dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
+                      title="Delete folder"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -850,6 +928,68 @@ export const FileManager: React.FC<FileManagerProps> = ({
                     <FolderPlus className="h-3.5 w-3.5" />
                   )}
                   <span>Create Folder</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Rename / Edit Folder Modal */}
+      {editingFolder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400">
+                <FolderOpen className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Rename Folder
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Size: <span className="font-semibold text-slate-700 dark:text-slate-300">{formatBytes(getFolderTotalSize(editingFolder.id))}</span> • {getFolderTotalFilesCount(editingFolder.id)} total files
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleRenameFolderSubmit} className="mt-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Folder Name
+                </label>
+                <input
+                  id="input-rename-folder-name"
+                  type="text"
+                  required
+                  autoFocus
+                  placeholder="Enter new folder name"
+                  value={renameFolderName}
+                  onChange={(e) => setRenameFolderName(e.target.value)}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-indigo-600 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-indigo-400 dark:focus:bg-slate-800"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingFolder(null)}
+                  className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="btn-save-rename-folder"
+                  type="submit"
+                  disabled={isSubmittingRename || !renameFolderName.trim() || renameFolderName.trim() === editingFolder.name}
+                  className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-indigo-600/25 hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {isSubmittingRename ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  <span>Save Changes</span>
                 </button>
               </div>
             </form>

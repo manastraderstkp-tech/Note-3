@@ -2266,6 +2266,91 @@ export async function syncCreateFolder(
   }
 }
 
+export async function syncUpdateFolder(
+  userId: string,
+  folderId: string,
+  newName: string
+): Promise<{ data: Folder | null; error: string | null }> {
+  const client = getSupabase();
+  const localKey = getUserFoldersKey(userId);
+  const trimmedName = newName.trim() || 'Untitled Folder';
+  const now = new Date().toISOString();
+
+  let updatedFolder: Folder | null = null;
+
+  try {
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      const currentList: Folder[] = JSON.parse(raw);
+      const idx = currentList.findIndex((f) => f.id === folderId);
+      if (idx >= 0) {
+        currentList[idx] = {
+          ...currentList[idx],
+          name: trimmedName,
+          updatedAt: now,
+        };
+        updatedFolder = currentList[idx];
+        localStorage.setItem(localKey, JSON.stringify(currentList));
+      }
+    }
+  } catch (e) {
+    console.warn('Error updating folder in local cache', e);
+  }
+
+  if (client) {
+    try {
+      let effectiveUserId = userId;
+      try {
+        const { data: sessionData } = await client.auth.getSession();
+        if (sessionData?.session?.user?.id) {
+          effectiveUserId = sessionData.session.user.id;
+        }
+      } catch {
+        // ignore
+      }
+
+      if (isValidUUID(folderId)) {
+        const { data, error } = await client
+          .from('folders')
+          .update({
+            name: trimmedName,
+            updated_at: now,
+          })
+          .eq('id', folderId)
+          .select()
+          .single();
+
+        if (error) {
+          console.warn('Supabase update folder error, local cache updated:', error);
+        } else if (data) {
+          updatedFolder = {
+            id: data.id,
+            userId: data.user_id || userId,
+            name: data.name,
+            parentId: data.parent_id || null,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Error updating folder in Supabase:', e);
+    }
+  }
+
+  if (!updatedFolder) {
+    updatedFolder = {
+      id: folderId,
+      userId,
+      name: trimmedName,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  return { data: updatedFolder, error: null };
+}
+
 export async function syncDeleteFolder(userId: string, folderId: string): Promise<boolean> {
   const client = getSupabase();
   const localKey = getUserFoldersKey(userId);

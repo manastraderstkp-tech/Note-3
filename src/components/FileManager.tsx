@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   FolderOpen,
   FolderPlus,
@@ -29,7 +29,8 @@ import {
   Folder as FolderIconClosed,
   Eye,
   Edit3,
-  FolderUp
+  FolderUp,
+  X
 } from 'lucide-react';
 import { Folder, UserFile } from '../types';
 import { syncDownloadFile } from '../lib/supabase';
@@ -82,6 +83,15 @@ export const FileManager: React.FC<FileManagerProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  // Ensure cross-browser directory attribute support on folderInput
+  useEffect(() => {
+    if (folderInputRef.current) {
+      folderInputRef.current.setAttribute('webkitdirectory', '');
+      folderInputRef.current.setAttribute('directory', '');
+      folderInputRef.current.setAttribute('mozdirectory', '');
+    }
+  }, []);
 
   // Active folder object
   const currentFolder = folders.find((f) => f.id === currentFolderId) || null;
@@ -664,43 +674,80 @@ export const FileManager: React.FC<FileManagerProps> = ({
           <div className="relative flex-1 sm:w-64">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input
+              id="input-search-drive"
               type="text"
-              placeholder="Search in drive..."
+              placeholder="Search files & folders..."
               value={localSearch}
               onChange={(e) => setLocalSearch(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-500"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-7 text-xs text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:bg-white focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-500"
             />
+            {localSearch && (
+              <button
+                id="btn-clear-search-drive"
+                type="button"
+                onClick={() => setLocalSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                title="Clear search"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
 
           <div className="flex rounded-xl border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-700 dark:bg-slate-800">
             <button
+              id="btn-view-mode-grid"
+              type="button"
               onClick={() => setViewMode('grid')}
-              className={`rounded-lg p-1.5 transition ${
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
                 viewMode === 'grid'
-                  ? 'bg-white text-indigo-600 shadow-2xs dark:bg-slate-700 dark:text-indigo-400'
-                  : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                  ? 'bg-white text-indigo-600 shadow-2xs font-bold dark:bg-slate-700 dark:text-indigo-400'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
               title="Grid view"
             >
               <LayoutGrid className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Grid</span>
             </button>
             <button
+              id="btn-view-mode-list"
+              type="button"
               onClick={() => setViewMode('list')}
-              className={`rounded-lg p-1.5 transition ${
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
                 viewMode === 'list'
-                  ? 'bg-white text-indigo-600 shadow-2xs dark:bg-slate-700 dark:text-indigo-400'
-                  : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                  ? 'bg-white text-indigo-600 shadow-2xs font-bold dark:bg-slate-700 dark:text-indigo-400'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
               }`}
               title="List view"
             >
               <List className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">List</span>
             </button>
           </div>
         </div>
       </div>
 
+      {/* Active Search Banner */}
+      {effectiveSearch && (
+        <div className="flex items-center justify-between rounded-2xl bg-indigo-50/80 px-4 py-2 text-xs text-indigo-900 dark:bg-indigo-950/50 dark:text-indigo-200">
+          <div className="flex items-center gap-2">
+            <Search className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+            <span>
+              Search results for <strong>"{effectiveSearch}"</strong>: {filteredFolders.length} folders, {filteredFiles.length} files found
+            </span>
+          </div>
+          <button
+            onClick={() => setLocalSearch('')}
+            className="font-bold underline text-indigo-700 hover:text-indigo-900 dark:text-indigo-300 dark:hover:text-white"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {/* Drag and Drop Zone */}
       <div
+        id="dropzone-file-manager"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -721,12 +768,39 @@ export const FileManager: React.FC<FileManagerProps> = ({
         <h3 className="mt-3 text-sm font-bold text-slate-800 dark:text-slate-200">
           {isUploading ? uploadProgressText : 'Drag and drop files or folders here, or click to browse'}
         </h3>
-        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-          Upload individual files, full folders with subdirectories, documents, images, or archives into{' '}
+        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500 max-w-lg">
+          Upload individual files, nested folders with subdirectories, documents, images, or code into{' '}
           <span className="font-semibold text-indigo-600 dark:text-indigo-400">
             {currentFolder ? currentFolder.name : 'Root Drive'}
           </span>
         </p>
+
+        {/* Quick Click Action Buttons Inside Dropzone */}
+        <div
+          className="mt-3 flex flex-wrap items-center justify-center gap-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            id="btn-dropzone-upload-files"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-indigo-600 active:scale-95 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+          >
+            <UploadCloud className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+            <span>Select Files</span>
+          </button>
+          <button
+            type="button"
+            id="btn-dropzone-upload-folder"
+            onClick={() => folderInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-indigo-600 active:scale-95 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+          >
+            <FolderUp className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+            <span>Select Folder</span>
+          </button>
+        </div>
       </div>
 
       {/* Folders Section */}
@@ -987,6 +1061,69 @@ export const FileManager: React.FC<FileManagerProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                  {/* Folders in List View */}
+                  {filteredFolders.map((folder) => {
+                    const childFilesCount = files.filter((f) => f.folderId === folder.id).length;
+                    const folderTotalSize = getFolderTotalSize(folder.id);
+                    return (
+                      <tr
+                        key={`list-folder-${folder.id}`}
+                        onClick={() => setCurrentFolderId(folder.id)}
+                        className="cursor-pointer bg-slate-50/40 hover:bg-indigo-50/60 dark:bg-slate-850/20 dark:hover:bg-indigo-950/30 transition group"
+                      >
+                        <td className="py-3 pl-4 pr-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-500 border border-amber-200 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-400">
+                              <FolderOpen className="h-4 w-4" />
+                            </div>
+                            <span className="font-bold text-slate-900 group-hover:text-indigo-600 dark:text-white dark:group-hover:text-indigo-400 truncate max-w-xs">
+                              {folder.name}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-slate-400 font-mono text-[11px]">
+                          folder
+                        </td>
+                        <td className="px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">
+                          {formatBytes(folderTotalSize)}
+                        </td>
+                        <td className="px-3 py-3 text-slate-400">
+                          {childFilesCount} file{childFilesCount !== 1 ? 's' : ''}
+                        </td>
+                        <td className="py-3 pl-3 pr-4 text-right">
+                          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              id={`btn-edit-folder-list-${folder.id}`}
+                              onClick={() => {
+                                setEditingFolder(folder);
+                                setRenameFolderName(folder.name);
+                              }}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/50 dark:hover:text-indigo-400"
+                              title="Rename folder"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              id={`btn-delete-folder-list-${folder.id}`}
+                              onClick={() => {
+                                setDeleteTarget({
+                                  type: 'folder',
+                                  id: folder.id,
+                                  name: folder.name,
+                                });
+                              }}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50"
+                              title="Delete folder"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {/* Files in List View */}
                   {filteredFiles.map((file) => {
                     const fileStyle = getFileIcon(file.fileType, file.name);
                     const IconComp = fileStyle.icon;

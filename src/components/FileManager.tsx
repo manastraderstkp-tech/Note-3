@@ -34,7 +34,8 @@ import {
 } from 'lucide-react';
 import { Folder, UserFile } from '../types';
 import { syncDownloadFile } from '../lib/supabase';
-import { getLocalFileBlob } from '../lib/fileStorage';
+import { getLocalFileBlob, saveLocalFileBlob } from '../lib/fileStorage';
+import { ImagePreviewModal } from './ImagePreviewModal';
 
 interface FileManagerProps {
   folders: Folder[];
@@ -626,6 +627,33 @@ export const FileManager: React.FC<FileManagerProps> = ({
       if (file.id) {
         setDownloadingFileId(null);
       }
+    }
+  };
+
+  // Save modified image changes (crop/rotate/adjustments)
+  const handleSaveModifiedImage = async (
+    targetFile: UserFile,
+    newBlob: Blob,
+    newFile: File
+  ): Promise<boolean> => {
+    try {
+      // 1. Immediately cache updated blob in IndexedDB for instant retrieval
+      await saveLocalFileBlob(targetFile.id, newBlob, {
+        name: targetFile.name,
+        type: newFile.type,
+        size: newBlob.size,
+      });
+
+      // 2. Upload/sync updated image file
+      const res = await onUploadFile(targetFile.folderId, newFile);
+      if (res && !res.success && res.error) {
+        console.warn('Backend image re-upload returned note, stored in cache:', res.error);
+      }
+      return true;
+    } catch (err: any) {
+      console.error('Failed to save modified image:', err);
+      onShowToast(err?.message || 'Failed to save changes to image.', 'error');
+      return false;
     }
   };
 
@@ -1242,6 +1270,33 @@ export const FileManager: React.FC<FileManagerProps> = ({
                         </td>
                         <td className="py-3 pl-3 pr-4 text-right">
                           <div className="flex items-center justify-end gap-1">
+                            {isImageFile(file.fileType, file.name) && (
+                              <button
+                                id={`btn-preview-file-list-${file.id}`}
+                                onClick={async () => {
+                                  let finalUrl = file.storageUrl || '';
+                                  if (!finalUrl && file.id) {
+                                    try {
+                                      const blob = await getLocalFileBlob(file.id);
+                                      if (blob) {
+                                        finalUrl = URL.createObjectURL(blob);
+                                      }
+                                    } catch {
+                                      // ignore
+                                    }
+                                  }
+                                  setPreviewImage({
+                                    url: finalUrl,
+                                    name: file.name,
+                                    file,
+                                  });
+                                }}
+                                className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-indigo-400 transition"
+                                title="Preview & edit image"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                             {file.storageUrl && (
                               <a
                                 href={file.storageUrl}
@@ -1428,50 +1483,17 @@ export const FileManager: React.FC<FileManagerProps> = ({
         </div>
       )}
 
-      {/* Image Preview Modal */}
+      {/* Interactive Image Preview & Transformation Modal */}
       {previewImage && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
-          onClick={() => setPreviewImage(null)}
-        >
-          <div
-            className="relative max-h-[90vh] max-w-4xl overflow-hidden rounded-2xl bg-slate-900 p-2 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-3 py-2 text-xs text-slate-300">
-              <span className="font-semibold truncate max-w-md">{previewImage.name}</span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() =>
-                    handleDownloadFile(
-                      previewImage.file || {
-                        name: previewImage.name,
-                        storageUrl: previewImage.url,
-                      }
-                    )
-                  }
-                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-bold text-white hover:bg-indigo-700 transition shadow-xs"
-                  title="Download image"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span>Download</span>
-                </button>
-                <button
-                  onClick={() => setPreviewImage(null)}
-                  className="rounded-lg bg-slate-800 px-2.5 py-1 text-xs font-bold hover:bg-slate-700 text-white"
-                >
-                  Close (ESC)
-                </button>
-              </div>
-            </div>
-            <img
-              src={previewImage.url}
-              alt={previewImage.name}
-              className="max-h-[75vh] w-auto max-w-full rounded-xl object-contain mx-auto"
-              referrerPolicy="no-referrer"
-            />
-          </div>
-        </div>
+        <ImagePreviewModal
+          imageSrc={previewImage.url}
+          fileName={previewImage.name}
+          file={previewImage.file || null}
+          onClose={() => setPreviewImage(null)}
+          onDownloadFile={handleDownloadFile}
+          onSaveModifiedImage={handleSaveModifiedImage}
+          onShowToast={onShowToast}
+        />
       )}
 
       {/* Delete Confirmation Modal */}

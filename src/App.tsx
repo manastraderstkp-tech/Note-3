@@ -943,7 +943,7 @@ export default function App() {
   const handleCreateFolder = async (
     name: string,
     parentId?: string | null
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<{ success: boolean; error?: string; folder?: Folder }> => {
     if (!currentUser) {
       showToast('You must be signed in to create folders.', 'error');
       return { success: false, error: 'User session not found' };
@@ -955,7 +955,12 @@ export default function App() {
     }
 
     if (res.data) {
-      setFolders((prev) => [...prev, res.data!]);
+      setFolders((prev) => {
+        const exists = prev.some((f) => f.id === res.data!.id);
+        if (exists) return prev.map((f) => (f.id === res.data!.id ? res.data! : f));
+        return [...prev, res.data!];
+      });
+      return { success: true, folder: res.data };
     }
     return { success: true };
   };

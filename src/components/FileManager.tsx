@@ -28,7 +28,8 @@ import {
   Loader2,
   Folder as FolderIconClosed,
   Eye,
-  Edit3
+  Edit3,
+  FolderUp
 } from 'lucide-react';
 import { Folder, UserFile } from '../types';
 import { syncDownloadFile } from '../lib/supabase';
@@ -36,7 +37,7 @@ import { syncDownloadFile } from '../lib/supabase';
 interface FileManagerProps {
   folders: Folder[];
   files: UserFile[];
-  onCreateFolder: (name: string, parentId?: string | null) => Promise<{ success: boolean; error?: string }>;
+  onCreateFolder: (name: string, parentId?: string | null) => Promise<{ success: boolean; error?: string; folder?: Folder }>;
   onRenameFolder?: (folderId: string, newName: string) => Promise<{ success: boolean; error?: string }>;
   onDeleteFolder: (folderId: string) => Promise<void>;
   onUploadFile: (folderId: string | null, file: File) => Promise<{ success: boolean; error?: string }>;
@@ -80,6 +81,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   // Active folder object
   const currentFolder = folders.find((f) => f.id === currentFolderId) || null;
@@ -239,21 +241,91 @@ export const FileManager: React.FC<FileManagerProps> = ({
     }
   };
 
-  // Handle Multi-file Upload
-  const handleFilesSelected = async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
+  // Generic handler for files with optional nested relative directory paths
+  const uploadFilesWithPaths = async (
+    items: { file: File; relativePath?: string }[],
+    isFolderUpload = false
+  ) => {
+    if (!items || items.length === 0) return;
 
     setIsUploading(true);
     let successCount = 0;
     let failedCount = 0;
 
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
-      setUploadProgressText(`Uploading ${i + 1} of ${fileList.length}: ${file.name}`);
-      const res = await onUploadFile(currentFolderId, file);
-      if (res.success) {
-        successCount++;
-      } else {
+    // Cache of accumulated folder path string -> folder UUID
+    const folderPathToIdMap = new Map<string, string>();
+
+    const getOrCreateFolderForPath = async (relPath: string): Promise<string | null> => {
+      const cleanPath = relPath.replace(/\\/g, '/');
+      const segments = cleanPath.split('/').filter(Boolean);
+      if (segments.length <= 1) {
+        return currentFolderId;
+      }
+
+      // Drop the file name to get directory segments
+      const folderSegments = segments.slice(0, -1);
+      let parentId = currentFolderId;
+      let accumulatedKey = currentFolderId || 'root';
+
+      for (const segment of folderSegments) {
+        accumulatedKey = `${accumulatedKey}/${segment.toLowerCase()}`;
+
+        if (folderPathToIdMap.has(accumulatedKey)) {
+          parentId = folderPathToIdMap.get(accumulatedKey)!;
+          continue;
+        }
+
+        // Check if folder already exists in state
+        const existing = folders.find(
+          (f) =>
+            f.name.toLowerCase() === segment.toLowerCase() &&
+            (f.parentId || null) === (parentId || null)
+        );
+
+        if (existing) {
+          folderPathToIdMap.set(accumulatedKey, existing.id);
+          parentId = existing.id;
+        } else {
+          setUploadProgressText(`Creating folder "${segment}"...`);
+          const res = await onCreateFolder(segment, parentId);
+          if (res.success && res.folder) {
+            folderPathToIdMap.set(accumulatedKey, res.folder.id);
+            parentId = res.folder.id;
+          } else {
+            const created = folders.find(
+              (f) =>
+                f.name.toLowerCase() === segment.toLowerCase() &&
+                (f.parentId || null) === (parentId || null)
+            );
+            if (created) {
+              folderPathToIdMap.set(accumulatedKey, created.id);
+              parentId = created.id;
+            }
+          }
+        }
+      }
+
+      return parentId;
+    };
+
+    for (let i = 0; i < items.length; i++) {
+      const { file, relativePath } = items[i];
+      const displayPath = relativePath || file.name;
+      setUploadProgressText(`Uploading ${i + 1} of ${items.length}: ${displayPath}`);
+
+      try {
+        let targetFolderId = currentFolderId;
+        if (relativePath && (relativePath.includes('/') || relativePath.includes('\\'))) {
+          targetFolderId = await getOrCreateFolderForPath(relativePath);
+        }
+        const res = await onUploadFile(targetFolderId, file);
+        if (res.success) {
+          successCount++;
+        } else {
+          failedCount++;
+        }
+      } catch (err) {
+        console.warn('File upload exception:', err);
         failedCount++;
       }
     }
@@ -264,15 +336,46 @@ export const FileManager: React.FC<FileManagerProps> = ({
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    if (folderInputRef.current) {
+      folderInputRef.current.value = '';
+    }
 
     if (failedCount === 0) {
-      onShowToast(`Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}`, 'success');
+      onShowToast(
+        isFolderUpload
+          ? `Successfully uploaded folder containing ${successCount} file${successCount !== 1 ? 's' : ''}`
+          : `Successfully uploaded ${successCount} file${successCount !== 1 ? 's' : ''}`,
+        'success'
+      );
     } else {
-      onShowToast(`Uploaded ${successCount} files (${failedCount} failed)`, failedCount > 0 ? 'error' : 'success');
+      onShowToast(
+        `Upload complete: ${successCount} uploaded, ${failedCount} failed`,
+        failedCount > 0 ? 'error' : 'success'
+      );
     }
   };
 
-  // Drag and Drop handlers
+  // Handle Multi-file Upload
+  const handleFilesSelected = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const items = Array.from(fileList).map((f) => ({
+      file: f,
+      relativePath: (f as any).webkitRelativePath || f.name,
+    }));
+    await uploadFilesWithPaths(items, false);
+  };
+
+  // Handle Folder Upload
+  const handleFolderSelected = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const items = Array.from(fileList).map((f) => ({
+      file: f,
+      relativePath: (f as any).webkitRelativePath || f.name,
+    }));
+    await uploadFilesWithPaths(items, true);
+  };
+
+  // Drag and Drop handlers with directory traversal
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -289,6 +392,74 @@ export const FileManager: React.FC<FileManagerProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+
+    // Check for webkitGetAsEntry support for folders
+    const items = e.dataTransfer.items;
+    if (items && items.length > 0) {
+      const parsedItems: { file: File; relativePath: string }[] = [];
+      let hasDirectory = false;
+
+      const readEntryRecursive = async (entry: any, currentPath = ''): Promise<void> => {
+        if (!entry) return;
+        if (entry.isFile) {
+          await new Promise<void>((resolve) => {
+            entry.file(
+              (file: File) => {
+                parsedItems.push({
+                  file,
+                  relativePath: currentPath ? `${currentPath}/${file.name}` : file.name,
+                });
+                resolve();
+              },
+              () => resolve()
+            );
+          });
+        } else if (entry.isDirectory) {
+          hasDirectory = true;
+          const dirReader = entry.createReader();
+          const readAllEntries = async (): Promise<any[]> => {
+            let all: any[] = [];
+            let batch: any[] = await new Promise((resolve) =>
+              dirReader.readEntries(resolve, () => resolve([]))
+            );
+            while (batch.length > 0) {
+              all = all.concat(batch);
+              batch = await new Promise((resolve) =>
+                dirReader.readEntries(resolve, () => resolve([]))
+              );
+            }
+            return all;
+          };
+
+          const entries = await readAllEntries();
+          const nextPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+          for (const subEntry of entries) {
+            await readEntryRecursive(subEntry, nextPath);
+          }
+        }
+      };
+
+      const promises: Promise<void>[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (typeof item.webkitGetAsEntry === 'function') {
+          const entry = item.webkitGetAsEntry();
+          if (entry) {
+            promises.push(readEntryRecursive(entry));
+          }
+        }
+      }
+
+      if (promises.length > 0) {
+        setIsUploading(true);
+        setUploadProgressText('Scanning dropped files and folders...');
+        await Promise.all(promises);
+        if (parsedItems.length > 0) {
+          await uploadFilesWithPaths(parsedItems, hasDirectory);
+          return;
+        }
+      }
+    }
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       await handleFilesSelected(e.dataTransfer.files);
@@ -382,7 +553,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
           <button
             id="btn-create-new-folder"
             onClick={() => setIsNewFolderOpen(true)}
-            className="flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-800 shadow-xs hover:border-slate-400 hover:bg-slate-50 transition active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700 dark:hover:border-slate-600"
+            className="flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-800 shadow-xs hover:border-slate-400 hover:bg-slate-50 transition active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700 dark:hover:border-slate-600"
           >
             <FolderPlus className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
             <span>New Folder</span>
@@ -392,7 +563,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
             id="btn-trigger-upload-files"
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/25 hover:bg-indigo-700 transition active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50/80 px-3.5 py-2.5 text-xs font-bold text-indigo-700 shadow-xs hover:bg-indigo-100 hover:border-indigo-300 transition active:scale-95 disabled:opacity-50 dark:border-indigo-900/50 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
           >
             {isUploading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -402,11 +573,35 @@ export const FileManager: React.FC<FileManagerProps> = ({
             <span>Upload Files</span>
           </button>
 
+          <button
+            id="btn-trigger-upload-folder"
+            onClick={() => folderInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-3.5 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-600/25 hover:bg-indigo-700 transition active:scale-95 disabled:opacity-50"
+          >
+            {isUploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FolderUp className="h-4 w-4" />
+            )}
+            <span>Upload Folder</span>
+          </button>
+
           {/* Hidden File Input */}
           <input
             type="file"
             ref={fileInputRef}
             onChange={(e) => handleFilesSelected(e.target.files)}
+            multiple
+            className="hidden"
+          />
+
+          {/* Hidden Folder Input */}
+          <input
+            type="file"
+            ref={folderInputRef}
+            onChange={(e) => handleFolderSelected(e.target.files)}
+            {...({ webkitdirectory: '', directory: '' } as any)}
             multiple
             className="hidden"
           />
@@ -524,10 +719,10 @@ export const FileManager: React.FC<FileManagerProps> = ({
           )}
         </div>
         <h3 className="mt-3 text-sm font-bold text-slate-800 dark:text-slate-200">
-          {isUploading ? uploadProgressText : 'Drag and drop files here, or click to browse'}
+          {isUploading ? uploadProgressText : 'Drag and drop files or folders here, or click to browse'}
         </h3>
         <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-          Upload images, documents, PDFs, spreadsheets, or code files into{' '}
+          Upload individual files, full folders with subdirectories, documents, images, or archives into{' '}
           <span className="font-semibold text-indigo-600 dark:text-indigo-400">
             {currentFolder ? currentFolder.name : 'Root Drive'}
           </span>
@@ -639,13 +834,24 @@ export const FileManager: React.FC<FileManagerProps> = ({
             <p className="mt-1 text-xs text-slate-400 max-w-sm">
               Upload files or drag them into the box above to store and organize your assets.
             </p>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="mt-4 flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-indigo-600/20 hover:bg-indigo-700"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Add First File</span>
-            </button>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+              <button
+                id="btn-empty-upload-files"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-indigo-600/20 hover:bg-indigo-700 active:scale-95 transition"
+              >
+                <UploadCloud className="h-3.5 w-3.5" />
+                <span>Upload Files</span>
+              </button>
+              <button
+                id="btn-empty-upload-folder"
+                onClick={() => folderInputRef.current?.click()}
+                className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 active:scale-95 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                <FolderUp className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span>Upload Folder</span>
+              </button>
+            </div>
           </div>
         ) : viewMode === 'grid' ? (
           /* Grid View */

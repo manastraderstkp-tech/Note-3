@@ -22,7 +22,7 @@ interface SqlSchemaModalProps {
 
 export const SqlSchemaModal: React.FC<SqlSchemaModalProps> = ({ isOpen, onClose }) => {
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<'all' | 'profiles' | 'rbac' | 'notes' | 'todos'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'profiles' | 'rbac' | 'notes' | 'todos' | 'storage'>('all');
 
   if (!isOpen) return null;
 
@@ -193,6 +193,61 @@ CREATE TABLE IF NOT EXISTS public.todos (
     category TEXT DEFAULT 'General',
     created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );`,
+    storage: `-- FOLDERS & FILES STORAGE SCHEMA & RLS
+CREATE TABLE IF NOT EXISTS public.folders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    name TEXT NOT NULL,
+    parent_id UUID REFERENCES public.folders(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Folders select policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders insert policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders update policy" ON public.folders;
+DROP POLICY IF EXISTS "Folders delete policy" ON public.folders;
+
+CREATE POLICY "Folders select policy" ON public.folders FOR SELECT
+    USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Folders insert policy" ON public.folders FOR INSERT
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Folders update policy" ON public.folders FOR UPDATE
+    USING (auth.uid() = user_id OR public.is_admin())
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Folders delete policy" ON public.folders FOR DELETE
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE TABLE IF NOT EXISTS public.files (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    folder_id UUID REFERENCES public.folders(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_type TEXT NOT NULL,
+    file_size BIGINT DEFAULT 0,
+    storage_url TEXT,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Files select policy" ON public.files;
+DROP POLICY IF EXISTS "Files insert policy" ON public.files;
+DROP POLICY IF EXISTS "Files update policy" ON public.files;
+DROP POLICY IF EXISTS "Files delete policy" ON public.files;
+
+CREATE POLICY "Files select policy" ON public.files FOR SELECT
+    USING (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Files insert policy" ON public.files FOR INSERT
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Files update policy" ON public.files FOR UPDATE
+    USING (auth.uid() = user_id OR public.is_admin())
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+CREATE POLICY "Files delete policy" ON public.files FOR DELETE
+    USING (auth.uid() = user_id OR public.is_admin());`,
   };
 
   const getActiveCode = () => {
@@ -294,6 +349,17 @@ CREATE TABLE IF NOT EXISTS public.todos (
               }`}
             >
               todos table
+            </button>
+            <button
+              onClick={() => setActiveTab('storage')}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+                activeTab === 'storage'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+              }`}
+            >
+              <Table className="h-3.5 w-3.5" />
+              <span>folders & files</span>
             </button>
           </div>
 

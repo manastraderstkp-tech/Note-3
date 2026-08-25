@@ -2104,29 +2104,41 @@ export async function syncFetchFolders(
 
   if (client) {
     try {
-      const { data, error } = await client
-        .from('folders')
-        .select('*')
-        .eq('user_id', userId)
-        .order('name', { ascending: true });
-
-      if (!error && data) {
-        const mappedFolders: Folder[] = data.map((row: any) => ({
-          id: row.id,
-          userId: row.user_id || userId,
-          name: row.name || 'Untitled Folder',
-          parentId: row.parent_id || null,
-          createdAt: row.created_at || new Date().toISOString(),
-          updatedAt: row.updated_at || row.created_at,
-        }));
-
-        try {
-          localStorage.setItem(localKey, JSON.stringify(mappedFolders));
-        } catch (e) {
-          console.warn('Failed to cache folders locally', e);
+      let effectiveUserId = userId;
+      try {
+        const { data: sessionData } = await client.auth.getSession();
+        if (sessionData?.session?.user?.id) {
+          effectiveUserId = sessionData.session.user.id;
         }
+      } catch {
+        // ignore session retrieval error
+      }
 
-        return { folders: mappedFolders, isCloud: true };
+      if (isValidUUID(effectiveUserId)) {
+        const { data, error } = await client
+          .from('folders')
+          .select('*')
+          .eq('user_id', effectiveUserId)
+          .order('name', { ascending: true });
+
+        if (!error && data) {
+          const mappedFolders: Folder[] = data.map((row: any) => ({
+            id: row.id,
+            userId: row.user_id || userId,
+            name: row.name || 'Untitled Folder',
+            parentId: row.parent_id || null,
+            createdAt: row.created_at || new Date().toISOString(),
+            updatedAt: row.updated_at || row.created_at,
+          }));
+
+          try {
+            localStorage.setItem(localKey, JSON.stringify(mappedFolders));
+          } catch (e) {
+            console.warn('Failed to cache folders locally', e);
+          }
+
+          return { folders: mappedFolders, isCloud: true };
+        }
       }
     } catch (e) {
       console.warn('Exception during syncFetchFolders, falling back to local:', e);
@@ -2153,72 +2165,100 @@ export async function syncCreateFolder(
 ): Promise<{ data: Folder | null; error: string | null }> {
   const client = getSupabase();
   const localKey = getUserFoldersKey(userId);
+  const newFolderId = providedId && isValidUUID(providedId) ? providedId : generateUUID();
 
   if (client) {
     try {
-      const validParentId = parentId && isValidUUID(parentId) ? parentId : null;
-      const payload: any = {
-        user_id: userId,
-        name: name.trim() || 'New Folder',
-        parent_id: validParentId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      
-      if (providedId) {
-        payload.id = providedId;
+      // Determine the true Supabase Auth UID if session is active
+      let effectiveUserId = userId;
+      try {
+        const { data: sessionData } = await client.auth.getSession();
+        if (sessionData?.session?.user?.id) {
+          effectiveUserId = sessionData.session.user.id;
+        } else {
+          const { data: userData } = await client.auth.getUser();
+          if (userData?.user?.id) {
+            effectiveUserId = userData.user.id;
+          }
+        }
+      } catch (authErr) {
+        console.warn('Could not retrieve Supabase session user id for folder creation:', authErr);
       }
 
-      const { data, error } = await client
-        .from('folders')
-        .insert(payload)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Supabase create folder error:', error);
-        return { data: null, error: error.message };
-      }
-
-      if (data) {
-        const newFolder: Folder = {
-          id: data.id,
-          userId: data.user_id || userId,
-          name: data.name,
-          parentId: data.parent_id || null,
-          createdAt: data.created_at,
-          updatedAt: data.updated_at,
+      // If effectiveUserId is a valid UUID, attempt insert in Supabase
+      if (isValidUUID(effectiveUserId)) {
+        const validParentId = parentId && isValidUUID(parentId) ? parentId : null;
+        const payload: any = {
+          id: newFolderId,
+          user_id: effectiveUserId,
+          name: name.trim() || 'New Folder',
+          parent_id: validParentId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         };
 
-        try {
-          const raw = localStorage.getItem(localKey);
-          const currentList: Folder[] = raw ? JSON.parse(raw) : [];
-          currentList.push(newFolder);
-          localStorage.setItem(localKey, JSON.stringify(currentList));
-        } catch (e) {
-          console.warn('Error caching created folder locally', e);
-        }
+        const { data, error } = await client
+          .from('folders')
+          .insert(payload)
+          .select()
+          .single();
 
-        return { data: newFolder, error: null };
+        if (error) {
+          console.warn('Supabase create folder returned error, gracefully saving locally:', error);
+          // Fall back gracefully so user operation never breaks
+        } else if (data) {
+          const newFolder: Folder = {
+            id: data.id,
+            userId: data.user_id || userId,
+            name: data.name,
+            parentId: data.parent_id || null,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at,
+          };
+
+          try {
+            const raw = localStorage.getItem(localKey);
+            const currentList: Folder[] = raw ? JSON.parse(raw) : [];
+            const existingIdx = currentList.findIndex((f) => f.id === newFolder.id);
+            if (existingIdx >= 0) {
+              currentList[existingIdx] = newFolder;
+            } else {
+              currentList.push(newFolder);
+            }
+            localStorage.setItem(localKey, JSON.stringify(currentList));
+          } catch (e) {
+            console.warn('Error caching created folder locally', e);
+          }
+
+          return { data: newFolder, error: null };
+        }
+      } else {
+        console.warn('User ID is not a valid UUID for Supabase folder table, saving locally.');
       }
     } catch (e: any) {
-      console.error('Unexpected error in syncCreateFolder:', e);
-      return { data: null, error: e?.message || 'Error communicating with Supabase' };
+      console.warn('Unexpected exception in syncCreateFolder, falling back to local:', e);
     }
   }
 
+  // Graceful local creation fallback
   const localFolder: Folder = {
-    id: `folder-${Date.now()}`,
+    id: newFolderId,
     userId,
     name: name.trim() || 'New Folder',
     parentId: parentId || null,
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
 
   try {
     const raw = localStorage.getItem(localKey);
     const currentList: Folder[] = raw ? JSON.parse(raw) : [];
-    currentList.push(localFolder);
+    const existingIdx = currentList.findIndex((f) => f.id === localFolder.id);
+    if (existingIdx >= 0) {
+      currentList[existingIdx] = localFolder;
+    } else {
+      currentList.push(localFolder);
+    }
     localStorage.setItem(localKey, JSON.stringify(currentList));
     return { data: localFolder, error: null };
   } catch (e: any) {
@@ -2248,11 +2288,22 @@ export async function syncDeleteFolder(userId: string, folderId: string): Promis
 
   if (client) {
     try {
-      await client
-        .from('folders')
-        .delete()
-        .eq('id', folderId)
-        .eq('user_id', userId);
+      let effectiveUserId = userId;
+      try {
+        const { data: sessionData } = await client.auth.getSession();
+        if (sessionData?.session?.user?.id) {
+          effectiveUserId = sessionData.session.user.id;
+        }
+      } catch {
+        // ignore
+      }
+
+      if (isValidUUID(folderId)) {
+        await client
+          .from('folders')
+          .delete()
+          .eq('id', folderId);
+      }
     } catch (e) {
       console.warn('Error deleting folder from Supabase:', e);
     }
@@ -2270,9 +2321,19 @@ export async function syncUploadFile(
 
   if (client) {
     try {
+      let effectiveUserId = userId;
+      try {
+        const { data: sessionData } = await client.auth.getSession();
+        if (sessionData?.session?.user?.id) {
+          effectiveUserId = sessionData.session.user.id;
+        }
+      } catch {
+        // ignore
+      }
+
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const targetFolder = folderId && isValidUUID(folderId) ? folderId : 'root';
-      const storagePath = `${userId}/${targetFolder}/${Date.now()}_${safeName}`;
+      const storagePath = `${effectiveUserId}/${targetFolder}/${Date.now()}_${safeName}`;
 
       const { error: uploadError } = await client.storage
         .from('user_files')
@@ -2297,76 +2358,78 @@ export async function syncUploadFile(
         }
       }
 
-      const validFolderId = folderId && isValidUUID(folderId) ? folderId : null;
-      const filePayload = {
-        user_id: userId,
-        folder_id: validFolderId,
-        name: file.name,
-        file_path: storagePath,
-        file_type: file.type || 'application/octet-stream',
-        file_size: file.size,
-        storage_url: publicUrl,
-        created_at: new Date().toISOString(),
-      };
-
-      const { data, error: dbError } = await client
-        .from('files')
-        .insert(filePayload)
-        .select()
-        .single();
-
-      if (dbError) {
-        const fallbackFile: UserFile = {
-          id: `file-${Date.now()}`,
-          userId,
-          folderId: folderId || null,
+      if (isValidUUID(effectiveUserId)) {
+        const validFolderId = folderId && isValidUUID(folderId) ? folderId : null;
+        const filePayload = {
+          user_id: effectiveUserId,
+          folder_id: validFolderId,
           name: file.name,
-          filePath: storagePath,
-          fileType: file.type || 'application/octet-stream',
-          fileSize: file.size,
-          storageUrl: publicUrl,
-          createdAt: new Date().toISOString(),
+          file_path: storagePath,
+          file_type: file.type || 'application/octet-stream',
+          file_size: file.size,
+          storage_url: publicUrl,
+          created_at: new Date().toISOString(),
         };
 
-        try {
-          const raw = localStorage.getItem(localKey);
-          const currentList: UserFile[] = raw ? JSON.parse(raw) : [];
-          currentList.unshift(fallbackFile);
-          localStorage.setItem(localKey, JSON.stringify(currentList));
-        } catch (e) {
-          console.warn('Error caching uploaded file locally', e);
+        const { data, error: dbError } = await client
+          .from('files')
+          .insert(filePayload)
+          .select()
+          .single();
+
+        if (dbError) {
+          console.warn('Supabase files table insert error, caching locally:', dbError);
+          const fallbackFile: UserFile = {
+            id: `file-${Date.now()}`,
+            userId,
+            folderId: folderId || null,
+            name: file.name,
+            filePath: storagePath,
+            fileType: file.type || 'application/octet-stream',
+            fileSize: file.size,
+            storageUrl: publicUrl,
+            createdAt: new Date().toISOString(),
+          };
+
+          try {
+            const raw = localStorage.getItem(localKey);
+            const currentList: UserFile[] = raw ? JSON.parse(raw) : [];
+            currentList.unshift(fallbackFile);
+            localStorage.setItem(localKey, JSON.stringify(currentList));
+          } catch (e) {
+            console.warn('Error caching uploaded file locally', e);
+          }
+
+          return { data: fallbackFile, error: null };
         }
 
-        return { data: fallbackFile, error: null };
-      }
+        if (data) {
+          const savedFile: UserFile = {
+            id: data.id,
+            userId: data.user_id || userId,
+            folderId: data.folder_id || null,
+            name: data.name,
+            filePath: data.file_path,
+            fileType: data.file_type || 'application/octet-stream',
+            fileSize: Number(data.file_size || 0),
+            storageUrl: data.storage_url || publicUrl,
+            createdAt: data.created_at,
+          };
 
-      if (data) {
-        const savedFile: UserFile = {
-          id: data.id,
-          userId: data.user_id || userId,
-          folderId: data.folder_id || null,
-          name: data.name,
-          filePath: data.file_path,
-          fileType: data.file_type || 'application/octet-stream',
-          fileSize: Number(data.file_size || 0),
-          storageUrl: data.storage_url || publicUrl,
-          createdAt: data.created_at,
-        };
+          try {
+            const raw = localStorage.getItem(localKey);
+            const currentList: UserFile[] = raw ? JSON.parse(raw) : [];
+            currentList.unshift(savedFile);
+            localStorage.setItem(localKey, JSON.stringify(currentList));
+          } catch (e) {
+            console.warn('Error caching uploaded file locally', e);
+          }
 
-        try {
-          const raw = localStorage.getItem(localKey);
-          const currentList: UserFile[] = raw ? JSON.parse(raw) : [];
-          currentList.unshift(savedFile);
-          localStorage.setItem(localKey, JSON.stringify(currentList));
-        } catch (e) {
-          console.warn('Error caching uploaded file locally', e);
+          return { data: savedFile, error: null };
         }
-
-        return { data: savedFile, error: null };
       }
     } catch (e: any) {
-      console.error('Unexpected error in syncUploadFile:', e);
-      return { data: null, error: e?.message || 'Error communicating with Supabase' };
+      console.warn('Unexpected error in syncUploadFile, saving locally:', e);
     }
   }
 

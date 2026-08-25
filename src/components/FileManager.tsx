@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { Folder, UserFile } from '../types';
 import { syncDownloadFile } from '../lib/supabase';
+import { getLocalFileBlob } from '../lib/fileStorage';
 
 interface FileManagerProps {
   folders: Folder[];
@@ -46,6 +47,138 @@ interface FileManagerProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
   searchQuery?: string;
 }
+
+const getFileIcon = (fileType: string, name: string) => {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  const type = (fileType || '').toLowerCase();
+
+  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
+    return { icon: ImageIcon, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800' };
+  }
+  if (type.includes('pdf') || ext === 'pdf') {
+    return { icon: FileText, color: 'text-rose-500', bg: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800' };
+  }
+  if (type.includes('csv') || type.includes('spreadsheet') || ['xlsx', 'xls', 'csv'].includes(ext)) {
+    return { icon: FileSpreadsheet, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800' };
+  }
+  if (['json', 'js', 'ts', 'tsx', 'jsx', 'html', 'css', 'py', 'sql', 'md'].includes(ext)) {
+    return { icon: FileCode, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/40 border-violet-200 dark:border-violet-800' };
+  }
+  if (type.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) {
+    return { icon: Film, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800' };
+  }
+  if (type.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a'].includes(ext)) {
+    return { icon: Music, color: 'text-pink-500', bg: 'bg-pink-50 dark:bg-pink-950/40 border-pink-200 dark:border-pink-800' };
+  }
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+    return { icon: Archive, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800' };
+  }
+  return { icon: FileIcon, color: 'text-slate-500', bg: 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700' };
+};
+
+const isImageFile = (fileType: string, name: string) => {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  return (fileType || '').startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
+};
+
+interface ImageFileThumbnailProps {
+  file: UserFile;
+  onPreview: (url: string, name: string, file: UserFile) => void;
+}
+
+const ImageFileThumbnail: React.FC<ImageFileThumbnailProps> = ({ file, onPreview }) => {
+  const [resolvedUrl, setResolvedUrl] = useState<string>(file.storageUrl || '');
+  const [isBlobCreated, setIsBlobCreated] = useState(false);
+  const fileStyle = getFileIcon(file.fileType, file.name);
+  const IconComp = fileStyle.icon;
+
+  useEffect(() => {
+    let isMounted = true;
+    let localBlobUrl = '';
+
+    const checkAndResolve = async () => {
+      // If we have a working non-blob HTTP url, try it first
+      if (file.storageUrl && file.storageUrl.startsWith('http')) {
+        setResolvedUrl(file.storageUrl);
+        return;
+      }
+
+      // Check IndexedDB binary cache for offline/persisted blob
+      if (file.id) {
+        try {
+          const blob = await getLocalFileBlob(file.id);
+          if (blob && isMounted) {
+            localBlobUrl = URL.createObjectURL(blob);
+            setResolvedUrl(localBlobUrl);
+            setIsBlobCreated(true);
+            return;
+          }
+        } catch (e) {
+          console.warn('Error loading blob for thumbnail:', e);
+        }
+      }
+
+      if (file.storageUrl && isMounted) {
+        setResolvedUrl(file.storageUrl);
+      }
+    };
+
+    checkAndResolve();
+
+    return () => {
+      isMounted = false;
+      if (localBlobUrl) {
+        try {
+          URL.revokeObjectURL(localBlobUrl);
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [file.id, file.storageUrl]);
+
+  const handleImageError = async () => {
+    // If the HTTP/Blob URL failed, try pulling from IndexedDB directly
+    if (file.id && !isBlobCreated) {
+      try {
+        const blob = await getLocalFileBlob(file.id);
+        if (blob) {
+          const newUrl = URL.createObjectURL(blob);
+          setResolvedUrl(newUrl);
+          setIsBlobCreated(true);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    setResolvedUrl('');
+  };
+
+  if (!resolvedUrl) {
+    return <IconComp className={`h-12 w-12 ${fileStyle.color}`} />;
+  }
+
+  return (
+    <>
+      <img
+        src={resolvedUrl}
+        alt={file.name}
+        className="h-full w-full object-cover transition group-hover:scale-105"
+        referrerPolicy="no-referrer"
+        onError={handleImageError}
+      />
+      <button
+        type="button"
+        onClick={() => onPreview(resolvedUrl, file.name, file)}
+        className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition text-white"
+        title="Preview image"
+      >
+        <Eye className="h-6 w-6" />
+      </button>
+    </>
+  );
+};
 
 export const FileManager: React.FC<FileManagerProps> = ({
   folders,
@@ -72,7 +205,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [copiedFileId, setCopiedFileId] = useState<string | null>(null);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
-  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string; file?: UserFile } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     type: 'file' | 'folder';
     id: string;
@@ -177,39 +310,6 @@ export const FileManager: React.FC<FileManagerProps> = ({
     } catch {
       return iso;
     }
-  };
-
-  const getFileIcon = (fileType: string, name: string) => {
-    const ext = name.split('.').pop()?.toLowerCase() || '';
-    const type = fileType.toLowerCase();
-
-    if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
-      return { icon: ImageIcon, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800' };
-    }
-    if (type.includes('pdf') || ext === 'pdf') {
-      return { icon: FileText, color: 'text-rose-500', bg: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800' };
-    }
-    if (type.includes('csv') || type.includes('spreadsheet') || ['xlsx', 'xls', 'csv'].includes(ext)) {
-      return { icon: FileSpreadsheet, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800' };
-    }
-    if (['json', 'js', 'ts', 'tsx', 'jsx', 'html', 'css', 'py', 'sql', 'md'].includes(ext)) {
-      return { icon: FileCode, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/40 border-violet-200 dark:border-violet-800' };
-    }
-    if (type.startsWith('video/') || ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) {
-      return { icon: Film, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800' };
-    }
-    if (type.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a'].includes(ext)) {
-      return { icon: Music, color: 'text-pink-500', bg: 'bg-pink-50 dark:bg-pink-950/40 border-pink-200 dark:border-pink-800' };
-    }
-    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
-      return { icon: Archive, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800' };
-    }
-    return { icon: FileIcon, color: 'text-slate-500', bg: 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700' };
-  };
-
-  const isImageFile = (fileType: string, name: string) => {
-    const ext = name.split('.').pop()?.toLowerCase() || '';
-    return fileType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
   };
 
   // Handle New Folder Submission
@@ -945,25 +1045,13 @@ export const FileManager: React.FC<FileManagerProps> = ({
                     <div
                       className={`relative mb-3 flex h-36 w-full items-center justify-center overflow-hidden rounded-xl border ${fileStyle.bg}`}
                     >
-                      {isImage && file.storageUrl ? (
-                        <>
-                          <img
-                            src={file.storageUrl}
-                            alt={file.name}
-                            className="h-full w-full object-cover transition group-hover:scale-105"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = 'none';
-                            }}
-                          />
-                          <button
-                            onClick={() => setPreviewImage({ url: file.storageUrl, name: file.name })}
-                            className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition text-white"
-                            title="Preview image"
-                          >
-                            <Eye className="h-6 w-6" />
-                          </button>
-                        </>
+                      {isImage ? (
+                        <ImageFileThumbnail
+                          file={file}
+                          onPreview={(url, name, f) =>
+                            setPreviewImage({ url, name, file: f })
+                          }
+                        />
                       ) : (
                         <IconComp className={`h-12 w-12 ${fileStyle.color}`} />
                       )}
@@ -1354,7 +1442,14 @@ export const FileManager: React.FC<FileManagerProps> = ({
               <span className="font-semibold truncate max-w-md">{previewImage.name}</span>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handleDownloadFile({ name: previewImage.name, storageUrl: previewImage.url })}
+                  onClick={() =>
+                    handleDownloadFile(
+                      previewImage.file || {
+                        name: previewImage.name,
+                        storageUrl: previewImage.url,
+                      }
+                    )
+                  }
                   className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-bold text-white hover:bg-indigo-700 transition shadow-xs"
                   title="Download image"
                 >

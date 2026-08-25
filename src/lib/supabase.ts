@@ -22,6 +22,13 @@ import {
   DEFAULT_ADMIN_EMAIL,
   EMAIL_REDIRECT_URL,
 } from './config';
+import {
+  saveLocalFileBlob,
+  getLocalFileBlob,
+  deleteLocalFileBlob,
+  getAccurateMimeType,
+  triggerBlobDownload,
+} from './fileStorage';
 
 export { SUPABASE_URL, SUPABASE_ANON_KEY, DEFAULT_ADMIN_EMAIL, EMAIL_REDIRECT_URL };
 
@@ -2404,6 +2411,25 @@ export async function syncUploadFile(
   const client = getSupabase();
   const localKey = getUserFilesKey(userId);
 
+  // Generate robust unique ID for this file
+  const generatedId =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `file_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+  const accurateType = getAccurateMimeType(file.name, file.type);
+
+  // Store raw binary Blob directly in IndexedDB first to guarantee non-corruption
+  try {
+    await saveLocalFileBlob(generatedId, file, {
+      name: file.name,
+      type: accurateType,
+      size: file.size,
+    });
+  } catch (e) {
+    console.warn('IndexedDB immediate cache save error:', e);
+  }
+
   if (client) {
     try {
       let effectiveUserId = userId;
@@ -2420,11 +2446,13 @@ export async function syncUploadFile(
       const targetFolder = folderId && isValidUUID(folderId) ? folderId : 'root';
       const storagePath = `${effectiveUserId}/${targetFolder}/${Date.now()}_${safeName}`;
 
+      // Upload with accurate contentType so Supabase doesn't default to text/plain
       const { error: uploadError } = await client.storage
         .from('user_files')
         .upload(storagePath, file, {
           cacheControl: '3600',
           upsert: true,
+          contentType: accurateType,
         });
 
       let publicUrl = '';
@@ -2446,11 +2474,12 @@ export async function syncUploadFile(
       if (isValidUUID(effectiveUserId)) {
         const validFolderId = folderId && isValidUUID(folderId) ? folderId : null;
         const filePayload = {
+          id: generatedId,
           user_id: effectiveUserId,
           folder_id: validFolderId,
           name: file.name,
           file_path: storagePath,
-          file_type: file.type || 'application/octet-stream',
+          file_type: accurateType,
           file_size: file.size,
           storage_url: publicUrl,
           created_at: new Date().toISOString(),
@@ -2465,12 +2494,12 @@ export async function syncUploadFile(
         if (dbError) {
           console.warn('Supabase files table insert error, caching locally:', dbError);
           const fallbackFile: UserFile = {
-            id: `file-${Date.now()}`,
+            id: generatedId,
             userId,
             folderId: folderId || null,
             name: file.name,
             filePath: storagePath,
-            fileType: file.type || 'application/octet-stream',
+            fileType: accurateType,
             fileSize: file.size,
             storageUrl: publicUrl,
             createdAt: new Date().toISOString(),
@@ -2495,11 +2524,20 @@ export async function syncUploadFile(
             folderId: data.folder_id || null,
             name: data.name,
             filePath: data.file_path,
-            fileType: data.file_type || 'application/octet-stream',
+            fileType: data.file_type || accurateType,
             fileSize: Number(data.file_size || 0),
             storageUrl: data.storage_url || publicUrl,
             createdAt: data.created_at,
           };
+
+          // Update IndexedDB key if database returned a different ID
+          if (data.id !== generatedId) {
+            saveLocalFileBlob(data.id, file, {
+              name: file.name,
+              type: accurateType,
+              size: file.size,
+            }).catch(() => {});
+          }
 
           try {
             const raw = localStorage.getItem(localKey);
@@ -2519,12 +2557,12 @@ export async function syncUploadFile(
   }
 
   const localFile: UserFile = {
-    id: `file-${Date.now()}`,
+    id: generatedId,
     userId,
     folderId: folderId || null,
     name: file.name,
     filePath: `local/${file.name}`,
-    fileType: file.type || 'application/octet-stream',
+    fileType: accurateType,
     fileSize: file.size,
     storageUrl: URL.createObjectURL(file),
     createdAt: new Date().toISOString(),
@@ -2621,6 +2659,15 @@ export async function syncDeleteFile(
   const client = getSupabase();
   const localKey = getUserFilesKey(userId);
 
+  // Clean from IndexedDB binary cache
+  try {
+    if (fileId) {
+      await deleteLocalFileBlob(fileId);
+    }
+  } catch (e) {
+    console.warn('Error deleting file from IndexedDB cache', e);
+  }
+
   try {
     const raw = localStorage.getItem(localKey);
     if (raw) {
@@ -2633,14 +2680,15 @@ export async function syncDeleteFile(
 
   if (client) {
     try {
-      if (filePath) {
+      if (filePath && !filePath.startsWith('local/')) {
         await client.storage.from('user_files').remove([filePath]);
       }
-      await client
-        .from('files')
-        .delete()
-        .eq('id', fileId)
-        .eq('user_id', userId);
+      if (isValidUUID(fileId)) {
+        await client
+          .from('files')
+          .delete()
+          .eq('id', fileId);
+      }
     } catch (e) {
       console.warn('Error deleting file from Supabase:', e);
     }
@@ -2649,49 +2697,109 @@ export async function syncDeleteFile(
 }
 
 export async function syncDownloadFile(file: {
+  id?: string;
   name: string;
   storageUrl?: string;
   filePath?: string;
+  fileType?: string;
 }): Promise<{ success: boolean; error?: string }> {
-  const client = getSupabase();
-
-  if (client && file.filePath && !file.filePath.startsWith('local/')) {
+  // 1. Tier 1: Check IndexedDB binary cache first (guaranteed byte-for-byte original file)
+  if (file.id) {
     try {
-      const { data, error } = await client.storage.from('user_files').download(file.filePath);
-      if (!error && data) {
-        const blobUrl = window.URL.createObjectURL(data);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = file.name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1500);
+      const cachedBlob = await getLocalFileBlob(file.id);
+      if (cachedBlob && cachedBlob.size > 0) {
+        triggerBlobDownload(cachedBlob, file.name);
         return { success: true };
       }
-    } catch (err) {
-      console.warn('Supabase Storage download failed:', err);
+    } catch (e) {
+      console.warn('IndexedDB blob retrieval check failed:', e);
     }
   }
 
-  if (file.storageUrl) {
+  const client = getSupabase();
+
+  // 2. Tier 2: Authenticated Supabase Storage download
+  if (client && file.filePath && !file.filePath.startsWith('local/')) {
+    try {
+      const { data, error } = await client.storage.from('user_files').download(file.filePath);
+      if (!error && data && data.size > 0) {
+        // Cache to IndexedDB for instant future downloads
+        if (file.id) {
+          saveLocalFileBlob(file.id, data, {
+            name: file.name,
+            type: file.fileType || data.type,
+            size: data.size,
+          }).catch(() => {});
+        }
+        triggerBlobDownload(data, file.name);
+        return { success: true };
+      }
+    } catch (err) {
+      console.warn('Supabase Storage authenticated download failed:', err);
+    }
+  }
+
+  // 3. Tier 3: Fetch from storageUrl safely (verifying against 403 error payloads)
+  if (file.storageUrl && file.storageUrl.startsWith('http')) {
+    try {
+      const res = await fetch(file.storageUrl);
+      if (res.ok) {
+        const fetchedBlob = await res.blob();
+        // Check if Supabase returned a JSON or XML permission error string instead of file data
+        const isJson = fetchedBlob.type.includes('application/json');
+        const isXml = fetchedBlob.type.includes('xml') || fetchedBlob.type.includes('html');
+        if ((isJson || isXml) && !file.name.toLowerCase().endsWith('.json') && !file.name.toLowerCase().endsWith('.xml') && !file.name.toLowerCase().endsWith('.html')) {
+          const textPreview = await fetchedBlob.text();
+          if (
+            textPreview.includes('error') ||
+            textPreview.includes('Unauthorized') ||
+            textPreview.includes('AccessDenied') ||
+            textPreview.includes('Bucket not found')
+          ) {
+            throw new Error('Storage returned access error instead of file payload');
+          }
+          // If valid text payload for other files, reconstruct
+          const fixedBlob = new Blob([textPreview], {
+            type: file.fileType || getAccurateMimeType(file.name),
+          });
+          triggerBlobDownload(fixedBlob, file.name);
+          return { success: true };
+        }
+
+        if (file.id) {
+          saveLocalFileBlob(file.id, fetchedBlob, {
+            name: file.name,
+            type: file.fileType || fetchedBlob.type,
+            size: fetchedBlob.size,
+          }).catch(() => {});
+        }
+        triggerBlobDownload(fetchedBlob, file.name);
+        return { success: true };
+      }
+    } catch (err) {
+      console.warn('Direct URL fetch failed:', err);
+    }
+  }
+
+  // 4. Tier 4: Blob URL (if still alive in active window session)
+  if (file.storageUrl && file.storageUrl.startsWith('blob:')) {
     try {
       const a = document.createElement('a');
       a.href = file.storageUrl;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
       a.download = file.name;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       return { success: true };
-    } catch {
-      window.open(file.storageUrl, '_blank');
-      return { success: true };
+    } catch (e) {
+      console.warn('Active blob URL download failed:', e);
     }
   }
 
-  return { success: false, error: 'No download source found for this file.' };
+  return {
+    success: false,
+    error: 'File source could not be retrieved. Please re-upload this file.',
+  };
 }
 
 // -----------------------------------------------------------------------------

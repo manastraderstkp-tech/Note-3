@@ -68,3 +68,61 @@
   background: rgba(148, 163, 184, 0.65);
 }
 
+/* Rich Text & Embedded Note Table Styling */
+.prose table,
+.rich-table,
+.note-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 0.875rem;
+}
+
+.prose table th,
+.prose table td,
+.rich-table th,
+.rich-table td,
+.note-content table th,
+.note-content table td {
+  border: 1px solid #cbd5e1;
+  padding: 8px 12px;
+  text-align: left;
+  min-width: 48px;
+}
+
+.prose table th,
+.rich-table th,
+.note-content table th {
+  background-color: #f1f5f9;
+  font-weight: bold;
+  color: #0f172a;
+}
+
+/* Dark mode table borders & headers */
+.dark .prose table th,
+.dark .prose table td,
+.dark .rich-table th,
+.dark .rich-table td,
+.dark .note-content table th,
+.dark .note-content table td {
+  border: 1px solid #374151;
+  color: #f1f5f9;
+}
+
+.dark .prose table th,
+.dark .rich-table th,
+.dark .note-content table th {
+  background-color: #1f2937;
+  font-weight: bold;
+}
+
+.dark .prose table tfoot tr,
+.dark .rich-table tfoot tr {
+  background-color: #1e293b;
+}
+
+.table-wrapper {
+  max-width: 100%;
+  overflow-x: auto;
+}
+

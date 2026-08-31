@@ -33,7 +33,7 @@ export function getNotePreviewText(content: string, limit: number = 180): string
 export function convertPlainTextToHtml(text: string): string {
   if (!text) return '<p><br></p>';
   // Check if it already looks like HTML
-  if (/<(p|div|h[1-6]|ul|ol|li|blockquote|span|b|i|u|strong|em)[\s>]/i.test(text)) {
+  if (/<(p|div|h[1-6]|ul|ol|li|blockquote|span|b|i|u|strong|em|table|thead|tbody|tr|th|td|tfoot)[\s>]/i.test(text)) {
     return text;
   }
   // Convert standard newlines to paragraphs

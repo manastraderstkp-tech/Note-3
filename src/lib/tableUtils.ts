@@ -443,6 +443,111 @@ export function calculateAndToggleSumRow(table: HTMLTableElement): { hasSum: boo
   return { hasSum: true, totals };
 }
 
+/**
+ * Sets the width of a specific column across all rows in the table.
+ */
+export function setColumnWidth(table: HTMLTableElement, colIndex: number, widthPx: number) {
+  if (!table || colIndex < 0) return;
+  const safeWidth = Math.max(40, Math.min(1200, Math.round(widthPx)));
+
+  table.style.tableLayout = 'fixed';
+
+  const rows = table.querySelectorAll('tr');
+  rows.forEach((row) => {
+    const cells = Array.from(row.children) as HTMLElement[];
+    if (cells[colIndex]) {
+      cells[colIndex].style.width = `${safeWidth}px`;
+      cells[colIndex].style.minWidth = `${safeWidth}px`;
+    }
+  });
+}
+
+/**
+ * Sets overall table width (e.g. '100%', '75%', '50%', 'max-content', or explicit px).
+ */
+export function setTableWidth(table: HTMLTableElement, width: string) {
+  if (!table) return;
+  table.style.width = width;
+  if (width === '100%') {
+    table.style.maxWidth = '100%';
+  }
+}
+
+/**
+ * Sets table horizontal alignment (left, center, right)
+ */
+export function setTableAlignment(table: HTMLTableElement, align: 'left' | 'center' | 'right') {
+  if (!table) return;
+  if (align === 'center') {
+    table.style.marginLeft = 'auto';
+    table.style.marginRight = 'auto';
+  } else if (align === 'right') {
+    table.style.marginLeft = 'auto';
+    table.style.marginRight = '0';
+  } else {
+    table.style.marginLeft = '0';
+    table.style.marginRight = 'auto';
+  }
+}
+
+/**
+ * Sets cell background color (for highlights / status)
+ */
+export function setCellBackgroundColor(cell: HTMLElement, color: string | null) {
+  if (!cell) return;
+  if (!color || color === 'transparent') {
+    cell.style.removeProperty('background-color');
+  } else {
+    cell.style.backgroundColor = color;
+  }
+}
+
+/**
+ * Moves the entire table block up or down relative to sibling elements in the editor.
+ */
+export function moveTableBlock(table: HTMLTableElement, direction: 'up' | 'down'): boolean {
+  const block = table.closest('.table-wrapper') || table;
+  const parent = block.parentElement;
+  if (!parent) return false;
+
+  if (direction === 'up') {
+    const prev = block.previousElementSibling;
+    if (prev) {
+      parent.insertBefore(block, prev);
+      return true;
+    }
+  } else {
+    const next = block.nextElementSibling;
+    if (next) {
+      if (next.nextSibling) {
+        parent.insertBefore(block, next.nextSibling);
+      } else {
+        parent.appendChild(block);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Gets cell column index (0-based)
+ */
+export function getCellColIndex(cell: HTMLElement): number {
+  const row = cell.closest('tr');
+  if (!row) return -1;
+  return Array.from(row.children).indexOf(cell);
+}
+
+/**
+ * Gets total column count for table
+ */
+export function getTableColsCount(table: HTMLTableElement): number {
+  const firstRow = table.querySelector('tr');
+  if (!firstRow) return 1;
+  return firstRow.children.length || 1;
+}
+
 // Internal helpers
 function getCellColumnIndex(cell: HTMLElement): number {
   const row = cell.closest('tr');

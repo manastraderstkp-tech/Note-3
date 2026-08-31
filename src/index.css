@@ -122,7 +122,76 @@
 }
 
 .table-wrapper {
+  position: relative;
   max-width: 100%;
-  overflow-x: auto;
+  margin: 1rem 0;
+  transition: box-shadow 0.2s ease, outline 0.2s ease;
+}
+
+/* Focused / hovered table wrapper outline in editor */
+.table-wrapper:hover {
+  outline: 1px dashed rgba(245, 158, 11, 0.4);
+  border-radius: 6px;
+}
+
+/* Draggable Table Dragging State */
+.table-wrapper.is-dragging {
+  opacity: 0.45;
+  outline: 2px dashed #f59e0b;
+}
+
+/* Table Drop Indicator Line */
+.table-drop-indicator {
+  height: 4px;
+  background: linear-gradient(90deg, #f59e0b, #e11d48);
+  border-radius: 9999px;
+  margin: 8px 0;
+  position: relative;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+  pointer-events: none;
+  animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.table-drop-indicator::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: #f59e0b;
+  border: 2px solid white;
+}
+
+/* Column Resize Handle */
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+  user-select: none;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle.active {
+  background-color: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+/* Table Corner Resize Handle */
+.table-corner-resize {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  cursor: se-resize;
+  z-index: 25;
+  background: linear-gradient(135deg, transparent 50%, #f59e0b 50%);
+  border-bottom-right-radius: 4px;
 }
 

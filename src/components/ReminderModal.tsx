@@ -11,7 +11,7 @@ interface ReminderModalProps {
   userId: string;
 }
 
-const CATEGORIES = ['Rent', 'Utilities', 'Subscription', 'Insurance', 'Loan', 'Internet / Phone', 'Salary', 'Maintenance', 'Other'];
+const CATEGORIES = ['Goods Purchase', 'Rent', 'Utilities', 'Subscription', 'Insurance', 'Loan', 'Internet / Phone', 'Salary', 'Maintenance', 'Other'];
 const PAYMENT_METHODS = ['Cash', 'eSewa', 'Khalti', 'connectIPS', 'Bank Transfer', 'Debit / Credit Card', 'Mobile Banking', 'Auto-Debit', 'Other'];
 
 export const ReminderModal: React.FC<ReminderModalProps> = ({
